@@ -12,6 +12,9 @@ export interface TranslatedItem {
   author?: string;
   categories?: string[];
   translatedAt: string;
+  // 来源feed信息，用于聚合输出时区分
+  sourceFeedId?: string;
+  sourceFeedName?: string;
 }
 
 export interface StoredFeed {
@@ -88,4 +91,54 @@ export async function appendItems(
   feed.items = feed.items.slice(0, 100);
 
   await saveFeed(feed);
+}
+
+// 加载所有已存储的feeds
+export async function loadAllFeeds(): Promise<StoredFeed[]> {
+  await ensureDataDir();
+
+  try {
+    const files = await fs.readdir(DATA_DIR);
+    const jsonFiles = files.filter(f => f.endsWith('.json'));
+
+    const feeds: StoredFeed[] = [];
+    for (const file of jsonFiles) {
+      try {
+        const data = await fs.readFile(path.join(DATA_DIR, file), 'utf-8');
+        feeds.push(JSON.parse(data));
+      } catch {
+        // 跳过损坏的文件
+      }
+    }
+
+    return feeds;
+  } catch {
+    return [];
+  }
+}
+
+// 获取所有翻译过的文章（按时间排序）
+export async function getAllTranslatedItems(limit: number = 100): Promise<TranslatedItem[]> {
+  const feeds = await loadAllFeeds();
+  const allItems: TranslatedItem[] = [];
+
+  for (const feed of feeds) {
+    for (const item of feed.items) {
+      // 确保每个item都有来源信息
+      allItems.push({
+        ...item,
+        sourceFeedId: item.sourceFeedId || feed.feedId,
+        sourceFeedName: item.sourceFeedName || feed.feedTitle,
+      });
+    }
+  }
+
+  // 按发布时间排序（最新的在前）
+  allItems.sort((a, b) => {
+    const dateA = new Date(a.pubDate).getTime();
+    const dateB = new Date(b.pubDate).getTime();
+    return dateB - dateA;
+  });
+
+  return allItems.slice(0, limit);
 }

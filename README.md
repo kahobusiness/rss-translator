@@ -4,10 +4,11 @@
 
 ## 功能
 
-- 定时从配置的RSS源获取最新内容
+- 从OPML文件自动加载RSS源（默认使用 [HN Popular Blogs 2025](https://gist.github.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b)）
 - 使用Claude API将内容翻译成中文
-- 生成标准RSS格式输出，可在任何RSS阅读器中订阅
-- 支持多个RSS源独立管理
+- 支持聚合订阅（所有源合并）和单独订阅
+- 翻译后的文章标注原始来源，方便分类阅读
+- 生成标准RSS格式输出，兼容Reeder等阅读器
 
 ## 部署步骤
 
@@ -17,49 +18,57 @@
 
 1. 访问 [Vercel](https://vercel.com) 并导入此项目
 2. 配置环境变量:
-   - `ANTHROPIC_API_KEY`: 你的Anthropic API密钥
-   - `CRON_SECRET`: (可选) 保护cron端点的密钥
+   - `ANTHROPIC_API_KEY`: （必须）你的Anthropic API密钥
+   - `CRON_SECRET`: （可选）保护cron端点的密钥
+   - `OPML_URL`: （可选）自定义OPML源地址
 
-### 3. 配置RSS源
+### 3. 订阅翻译内容
 
-编辑 `config/feeds.ts` 文件，添加你想要翻译的RSS源:
+部署完成后，在Reeder等RSS阅读器中添加：
 
-```typescript
-export const feedConfigs: FeedConfig[] = [
-  {
-    id: 'my-feed',
-    name: 'My Feed Name',
-    url: 'https://example.com/feed.xml',
-    enabled: true,
-  },
-];
+**推荐 - 聚合订阅（所有源合并）：**
+```
+https://your-domain.vercel.app/api/feed/all
 ```
 
-## 使用方法
-
-部署完成后，在你的RSS阅读器（如Reeder）中添加以下格式的订阅地址:
-
+**单独订阅某个源：**
 ```
-https://your-domain.vercel.app/api/feed/{feed-id}
+https://your-domain.vercel.app/api/feed/simonwillison-net
+https://your-domain.vercel.app/api/feed/paulgraham-com
 ```
-
-例如:
-- `https://your-domain.vercel.app/api/feed/hacker-news`
-- `https://your-domain.vercel.app/api/feed/techcrunch`
 
 ## API端点
 
 | 端点 | 描述 |
 |------|------|
-| `/api/feeds` | 获取所有可用的翻译源列表 |
-| `/api/feed/[id]` | 获取特定源的翻译后RSS |
+| `/api/feeds` | 获取所有可用的翻译源列表（JSON） |
+| `/api/feed/all` | 聚合所有源的翻译RSS（推荐） |
+| `/api/feed/[id]` | 获取特定源的翻译RSS |
 | `/api/cron` | 触发内容更新（由Vercel Cron自动调用） |
+
+## 自定义RSS源
+
+默认从HN Popular Blogs 2025 OPML加载约90个博客源。你可以通过设置 `OPML_URL` 环境变量使用自己的OPML文件。
+
+OPML文件格式示例：
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>My Feeds</title></head>
+  <body>
+    <outline text="Blogs" title="Blogs">
+      <outline type="rss" text="Example Blog" title="Example Blog"
+               xmlUrl="https://example.com/feed.xml" htmlUrl="https://example.com"/>
+    </outline>
+  </body>
+</opml>
+```
 
 ## 定时更新
 
-默认配置为每6小时自动更新一次（通过Vercel Cron）。
+默认配置为每天自动更新一次（通过Vercel Cron）。
 
-可以在 `vercel.json` 中修改更新频率:
+可以在 `vercel.json` 中修改更新频率：
 
 ```json
 {
@@ -71,6 +80,8 @@ https://your-domain.vercel.app/api/feed/{feed-id}
   ]
 }
 ```
+
+> 注意：Vercel免费版Cron最短间隔为1天，Pro版支持更频繁的调度。
 
 ## 本地开发
 
@@ -87,10 +98,18 @@ cp .env.example .env.local
 npm run dev
 ```
 
-## 注意事项
+## 存储说明
 
-- Vercel免费版的Cron最短间隔为1天，Pro版支持更频繁的调度
-- `/tmp`目录在Serverless环境中是临时的，生产环境建议使用Vercel KV或外部数据库持久化存储
+- 当前使用文件系统存储翻译结果
+- 开发环境：`./data/` 目录
+- 生产环境：`/tmp/rss-data/` 目录（Vercel Serverless临时存储）
+
+> 注意：`/tmp`在Serverless环境中是临时的，函数冷启动后会清空。生产环境建议升级到 Vercel KV 或外部数据库进行持久化存储。
+
+## 翻译说明
+
+- 由于源较多（约90个），每次Cron执行只处理部分源的新文章
+- 每个源每次最多翻译5篇新文章
 - 翻译会消耗Claude API额度，请注意用量
 
 ## License

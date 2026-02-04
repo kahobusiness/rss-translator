@@ -12,7 +12,7 @@ export async function GET(
   const { id } = await params;
 
   // 检查feed配置是否存在
-  const feedConfig = getFeedConfig(id);
+  const feedConfig = await getFeedConfig(id);
   if (!feedConfig) {
     return NextResponse.json({ error: 'Feed not found' }, { status: 404 });
   }
@@ -22,7 +22,7 @@ export async function GET(
 
   if (!storedFeed || storedFeed.items.length === 0) {
     return NextResponse.json(
-      { error: 'No translated content available yet' },
+      { error: 'No translated content available yet. The feed will be populated after the next cron job runs.' },
       { status: 404 }
     );
   }
@@ -41,6 +41,9 @@ export async function GET(
     updated: new Date(storedFeed.lastUpdated),
     generator: 'RSS Translator',
     copyright: `Original content from ${storedFeed.feedLink || feedConfig.url}`,
+    feedLinks: {
+      rss2: `${baseUrl}/api/feed/${id}`,
+    },
   });
 
   // 添加文章
@@ -50,7 +53,18 @@ export async function GET(
       id: item.guid,
       link: item.link,
       description: item.translatedContent.substring(0, 500) + '...',
-      content: item.translatedContent,
+      content: `
+        <div style="margin-bottom: 10px;">
+          <p><strong>原标题:</strong> ${item.originalTitle}</p>
+        </div>
+        <hr/>
+        ${item.translatedContent}
+        <hr/>
+        <details>
+          <summary>查看原文</summary>
+          ${item.originalContent}
+        </details>
+      `,
       author: item.author ? [{ name: item.author }] : undefined,
       date: new Date(item.pubDate),
       category: item.categories?.map(cat => ({ name: cat })),
@@ -63,7 +77,7 @@ export async function GET(
   return new NextResponse(rssXml, {
     headers: {
       'Content-Type': 'application/rss+xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=3600', // 缓存1小时
+      'Cache-Control': 'public, max-age=300, s-maxage=300',
     },
   });
 }
