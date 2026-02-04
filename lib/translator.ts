@@ -17,6 +17,29 @@ export interface TranslationResult {
   translatedContent: string;
 }
 
+// 从响应文本中提取 JSON（处理 markdown 代码块包裹的情况）
+function extractJSON(text: string): string {
+  // 移除可能的 markdown 代码块标记
+  let cleaned = text.trim();
+
+  // 匹配 ```json ... ``` 或 ``` ... ``` 格式
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    cleaned = codeBlockMatch[1].trim();
+  }
+
+  // 如果还是不是以 { 开头，尝试找到第一个 { 和最后一个 }
+  if (!cleaned.startsWith('{')) {
+    const startIndex = cleaned.indexOf('{');
+    const endIndex = cleaned.lastIndexOf('}');
+    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+      cleaned = cleaned.substring(startIndex, endIndex + 1);
+    }
+  }
+
+  return cleaned;
+}
+
 export async function translateContent(
   title: string,
   content: string
@@ -27,23 +50,20 @@ export async function translateContent(
     ? content.substring(0, maxContentLength) + '...'
     : content;
 
-  const prompt = `请将以下RSS文章翻译成中文。保持原文的格式和结构，翻译要自然流畅。
+  const prompt = `将以下RSS文章翻译成中文。保持原文的格式和结构，翻译要自然流畅。
 
 标题: ${title}
 
 内容:
 ${truncatedContent}
 
-请按以下JSON格式返回翻译结果（不要包含markdown代码块标记）:
-{
-  "translatedTitle": "翻译后的标题",
-  "translatedContent": "翻译后的内容"
-}`;
+直接返回JSON格式（不要用代码块包裹）:
+{"translatedTitle": "翻译后的标题", "translatedContent": "翻译后的内容"}`;
 
   try {
     const message = await anthropic.messages.create({
       model: MODEL_NAME,
-      max_tokens: 2048,
+      max_tokens: 4096,
       messages: [
         {
           role: 'user',
@@ -56,8 +76,9 @@ ${truncatedContent}
       ? message.content[0].text
       : '';
 
-    // 解析JSON响应
-    const result = JSON.parse(responseText);
+    // 提取并解析JSON响应
+    const jsonText = extractJSON(responseText);
+    const result = JSON.parse(jsonText);
 
     return {
       translatedTitle: result.translatedTitle || title,
