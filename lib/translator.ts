@@ -1,8 +1,16 @@
 import Anthropic from '@anthropic-ai/sdk';
 
+// Zenmux API 配置
+// 文档: https://zenmux.ai/docs/api/anthropic/create-messages-new.html
+const ZENMUX_BASE_URL = process.env.API_BASE_URL || 'https://api.zenmux.ai';
+
 const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
+  apiKey: process.env.API_KEY || process.env.ANTHROPIC_API_KEY,
+  baseURL: ZENMUX_BASE_URL,
 });
+
+// 可配置的模型名称
+const MODEL_NAME = process.env.MODEL_NAME || 'claude-sonnet-4-20250514';
 
 export interface TranslationResult {
   translatedTitle: string;
@@ -34,7 +42,7 @@ ${truncatedContent}
 
   try {
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: MODEL_NAME,
       max_tokens: 2048,
       messages: [
         {

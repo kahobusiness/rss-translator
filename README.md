@@ -5,7 +5,7 @@
 ## 功能
 
 - 从OPML文件自动加载RSS源（默认使用 [HN Popular Blogs 2025](https://gist.github.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b)）
-- 使用Claude API将内容翻译成中文
+- 使用Claude API将内容翻译成中文（支持 Zenmux 等第三方平台）
 - 支持聚合订阅（所有源合并）和单独订阅
 - 翻译后的文章标注原始来源，方便分类阅读
 - 生成标准RSS格式输出，兼容Reeder等阅读器
@@ -17,10 +17,7 @@
 ### 2. 在Vercel上部署
 
 1. 访问 [Vercel](https://vercel.com) 并导入此项目
-2. 配置环境变量:
-   - `ANTHROPIC_API_KEY`: （必须）你的Anthropic API密钥
-   - `CRON_SECRET`: （可选）保护cron端点的密钥
-   - `OPML_URL`: （可选）自定义OPML源地址
+2. 配置环境变量（见下方 API 配置说明）
 
 ### 3. 订阅翻译内容
 
@@ -36,6 +33,34 @@ https://your-domain.vercel.app/api/feed/all
 https://your-domain.vercel.app/api/feed/simonwillison-net
 https://your-domain.vercel.app/api/feed/paulgraham-com
 ```
+
+## API 配置
+
+### 使用 Zenmux（推荐）
+
+[Zenmux](https://zenmux.ai) 是一个 Claude API 中转平台，配置方式：
+
+| 环境变量 | 说明 | 示例 |
+|---------|------|------|
+| `API_KEY` | Zenmux API 密钥（必须） | `zm-xxx...` |
+| `API_BASE_URL` | API 地址（可选） | `https://api.zenmux.ai`（默认） |
+| `MODEL_NAME` | 模型名称（可选） | `claude-sonnet-4-20250514`（默认） |
+
+### 使用官方 Anthropic API
+
+如果想使用 Claude 官方 API：
+
+| 环境变量 | 说明 |
+|---------|------|
+| `API_KEY` 或 `ANTHROPIC_API_KEY` | Anthropic API 密钥 |
+| `API_BASE_URL` | `https://api.anthropic.com` |
+
+### 其他环境变量
+
+| 环境变量 | 说明 | 必须 |
+|---------|------|------|
+| `CRON_SECRET` | 保护 cron 端点的密钥 | 可选 |
+| `OPML_URL` | 自定义 OPML 源地址 | 可选 |
 
 ## API端点
 
@@ -110,7 +135,7 @@ npm run dev
 
 - 由于源较多（约90个），每次Cron执行只处理部分源的新文章
 - 每个源每次最多翻译5篇新文章
-- 翻译会消耗Claude API额度，请注意用量
+- 翻译会消耗 API 额度，请注意用量
 
 ## License
 
