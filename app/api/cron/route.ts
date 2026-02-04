@@ -5,13 +5,13 @@ import { translateContent } from '@/lib/translator';
 import { appendItems, getExistingGuids, TranslatedItem } from '@/lib/storage';
 
 // Vercel Cron需要的配置
-export const maxDuration = 60; // 免费版最大 60 秒
+export const maxDuration = 300; // Pro 版最大 300 秒
 export const dynamic = 'force-dynamic';
 
-// 每批处理的 feed 数量
-const FEEDS_PER_BATCH = 5;
+// 每批处理的 feed 数量（Pro 版可以处理更多）
+const FEEDS_PER_BATCH = 15;
 // 每个 feed 最多翻译的文章数
-const MAX_ITEMS_PER_FEED = 2;
+const MAX_ITEMS_PER_FEED = 3;
 
 async function processFeed(feedConfig: FeedConfig) {
   console.log(`Processing feed: ${feedConfig.name}`);
