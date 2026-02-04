@@ -5,8 +5,13 @@ import { translateContent } from '@/lib/translator';
 import { appendItems, getExistingGuids, TranslatedItem } from '@/lib/storage';
 
 // Vercel Cron需要的配置
-export const maxDuration = 300; // 5分钟最大执行时间
+export const maxDuration = 300; // Pro 版最大 300 秒
 export const dynamic = 'force-dynamic';
+
+// 每批处理的 feed 数量（Pro 版可以处理更多）
+const FEEDS_PER_BATCH = 15;
+// 每个 feed 最多翻译的文章数
+const MAX_ITEMS_PER_FEED = 3;
 
 async function processFeed(feedConfig: FeedConfig) {
   console.log(`Processing feed: ${feedConfig.name}`);
@@ -18,10 +23,10 @@ async function processFeed(feedConfig: FeedConfig) {
     // 获取已翻译的文章guid，避免重复翻译
     const existingGuids = await getExistingGuids(feedConfig.id);
 
-    // 过滤出新文章（只处理最近5篇新文章，因为源很多）
+    // 过滤出新文章
     const newItems = feed.items
       .filter(item => !existingGuids.has(item.guid))
-      .slice(0, 5);
+      .slice(0, MAX_ITEMS_PER_FEED);
 
     if (newItems.length === 0) {
       console.log(`No new items for ${feedConfig.name}`);
@@ -30,7 +35,7 @@ async function processFeed(feedConfig: FeedConfig) {
 
     console.log(`Found ${newItems.length} new items for ${feedConfig.name}`);
 
-    // 翻译新文章
+    // 顺序翻译新文章（避免并发过多）
     const translatedItems: TranslatedItem[] = [];
 
     for (const item of newItems) {
@@ -51,9 +56,6 @@ async function processFeed(feedConfig: FeedConfig) {
           sourceFeedId: feedConfig.id,
           sourceFeedName: feedConfig.name,
         });
-
-        // 添加延迟避免API限制
-        await new Promise(resolve => setTimeout(resolve, 500));
       } catch (error) {
         console.error(`Error translating item "${item.title}":`, error);
       }
@@ -86,48 +88,62 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  console.log('Starting cron job...');
+  // 获取批次参数
+  const { searchParams } = new URL(request.url);
+  const batchParam = searchParams.get('batch');
+  const batch = batchParam !== null ? parseInt(batchParam, 10) : 0;
+
+  console.log(`Starting cron job, batch ${batch}...`);
 
   const feeds = await getEnabledFeeds();
+  const totalBatches = Math.ceil(feeds.length / FEEDS_PER_BATCH);
+
+  // 计算当前批次要处理的 feeds
+  const startIndex = batch * FEEDS_PER_BATCH;
+  const endIndex = Math.min(startIndex + FEEDS_PER_BATCH, feeds.length);
+  const feedsToProcess = feeds.slice(startIndex, endIndex);
+
+  if (feedsToProcess.length === 0) {
+    return NextResponse.json({
+      success: true,
+      message: `Batch ${batch} is empty. Total batches: ${totalBatches}`,
+      batch,
+      totalBatches,
+      totalFeeds: feeds.length,
+    });
+  }
+
   const results = [];
   let totalProcessed = 0;
 
-  // 处理每个feed（限制并发以避免过多API调用）
-  // 由于源很多，每次只处理一部分
-  const batchSize = 10;
-  const maxFeeds = 30; // 每次最多处理30个源
-  const feedsToProcess = feeds.slice(0, maxFeeds);
-
-  for (let i = 0; i < feedsToProcess.length; i += batchSize) {
-    const batch = feedsToProcess.slice(i, i + batchSize);
-
-    // 并行处理这一批
-    const batchResults = await Promise.all(
-      batch.map(feed => processFeed(feed).catch(err => ({
-        feedId: feed.id,
-        feedName: feed.name,
-        processed: 0,
-        error: String(err),
-      })))
-    );
-
-    results.push(...batchResults);
-    totalProcessed += batchResults.reduce((sum, r) => sum + r.processed, 0);
-
-    // 批次间添加小延迟
-    if (i + batchSize < feedsToProcess.length) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
+  // 顺序处理每个 feed（避免超时）
+  for (const feed of feedsToProcess) {
+    const result = await processFeed(feed).catch(err => ({
+      feedId: feed.id,
+      feedName: feed.name,
+      processed: 0,
+      error: String(err),
+    }));
+    results.push(result);
+    totalProcessed += result.processed;
   }
 
-  console.log(`Cron job completed. Total processed: ${totalProcessed}`);
+  console.log(`Batch ${batch} completed. Processed: ${totalProcessed} items`);
+
+  const nextBatch = batch + 1 < totalBatches ? batch + 1 : null;
 
   return NextResponse.json({
     success: true,
     timestamp: new Date().toISOString(),
+    batch,
+    totalBatches,
+    nextBatch,
     totalFeeds: feeds.length,
     processedFeeds: feedsToProcess.length,
+    feedRange: `${startIndex + 1}-${endIndex}`,
     totalItems: totalProcessed,
     results,
+    // 下一批的 URL（方便连续调用）
+    nextBatchUrl: nextBatch !== null ? `/api/cron?batch=${nextBatch}` : null,
   });
 }
