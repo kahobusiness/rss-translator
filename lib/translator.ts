@@ -151,9 +151,9 @@ export async function translateBatch(
     const batchResults = await translateSingleBatch(batchItems);
 
     // 合并结果
-    for (const [id, result] of batchResults) {
+    batchResults.forEach((result, id) => {
       allResults.set(id, result);
-    }
+    });
   }
 
   console.log(`Successfully translated ${allResults.size}/${totalArticles} articles`);
