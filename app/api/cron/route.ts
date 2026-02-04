@@ -108,9 +108,13 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // 第二步：一次 API 调用批量翻译所有文章
-  console.log(`Translating ${allItemsToTranslate.length} articles in one API call...`);
+  // 第二步：批量翻译所有文章（自动分批避免超出上下文限制）
+  console.log(`Translating ${allItemsToTranslate.length} articles...`);
   const translations = await translateBatch(allItemsToTranslate);
+
+  // 计算实际 API 调用次数
+  const MAX_ARTICLES_PER_API_CALL = 8;
+  const apiCalls = Math.ceil(allItemsToTranslate.length / MAX_ARTICLES_PER_API_CALL);
 
   // 第三步：保存翻译结果到各自的 feed
   let totalProcessed = 0;
@@ -156,7 +160,7 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  console.log(`Batch ${batch} completed. Processed: ${totalProcessed} items with 1 API call`);
+  console.log(`Batch ${batch} completed. Processed: ${totalProcessed} items with ${apiCalls} API call(s)`);
 
   const nextBatch = batch + 1 < totalBatches ? batch + 1 : null;
 
@@ -170,7 +174,7 @@ export async function GET(request: NextRequest) {
     processedFeeds: feedsToProcess.length,
     feedRange: `${startIndex + 1}-${endIndex}`,
     totalItems: totalProcessed,
-    apiCalls: 1,
+    apiCalls,
     results,
     nextBatchUrl: nextBatch !== null ? `/api/cron?batch=${nextBatch}` : null,
   });

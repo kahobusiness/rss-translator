@@ -54,8 +54,13 @@ function extractJSON(text: string): string {
   return cleaned;
 }
 
-// 批量翻译多篇文章（一次 API 调用）
-export async function translateBatch(
+// 每次 API 调用的最大文章数（避免超出上下文限制）
+const MAX_ARTICLES_PER_API_CALL = 8;
+// 每篇文章内容的最大字符数
+const MAX_CONTENT_LENGTH = 1500;
+
+// 单次 API 调用翻译一批文章
+async function translateSingleBatch(
   items: TranslationInput[]
 ): Promise<Map<string, TranslationResult>> {
   if (items.length === 0) {
@@ -64,10 +69,8 @@ export async function translateBatch(
 
   // 构建批量翻译的 prompt
   const articlesText = items.map((item, index) => {
-    // 限制每篇内容长度
-    const maxContentLength = 2000;
-    const truncatedContent = item.content.length > maxContentLength
-      ? item.content.substring(0, maxContentLength) + '...'
+    const truncatedContent = item.content.length > MAX_CONTENT_LENGTH
+      ? item.content.substring(0, MAX_CONTENT_LENGTH) + '...'
       : item.content;
 
     return `---文章${index + 1} (ID: ${item.id})---
@@ -83,8 +86,6 @@ ${articlesText}
 [{"id": "文章ID", "translatedTitle": "翻译后的标题", "translatedContent": "翻译后的内容"}, ...]`;
 
   try {
-    console.log(`Translating ${items.length} articles in one batch...`);
-
     const message = await anthropic.messages.create({
       model: MODEL_NAME,
       max_tokens: 8192,
@@ -117,13 +118,46 @@ ${articlesText}
       });
     }
 
-    console.log(`Successfully translated ${resultMap.size} articles`);
     return resultMap;
   } catch (error) {
-    console.error('Batch translation error:', error);
-    // 翻译失败时返回空 Map，调用方会使用原文
+    console.error('Single batch translation error:', error);
     return new Map();
   }
+}
+
+// 批量翻译多篇文章（自动分批避免超出上下文限制）
+export async function translateBatch(
+  items: TranslationInput[]
+): Promise<Map<string, TranslationResult>> {
+  if (items.length === 0) {
+    return new Map();
+  }
+
+  const totalArticles = items.length;
+  const numBatches = Math.ceil(totalArticles / MAX_ARTICLES_PER_API_CALL);
+
+  console.log(`Translating ${totalArticles} articles in ${numBatches} API call(s)...`);
+
+  const allResults = new Map<string, TranslationResult>();
+
+  // 顺序处理每个子批次（避免并发导致的 API 限流）
+  for (let i = 0; i < numBatches; i++) {
+    const start = i * MAX_ARTICLES_PER_API_CALL;
+    const end = Math.min(start + MAX_ARTICLES_PER_API_CALL, totalArticles);
+    const batchItems = items.slice(start, end);
+
+    console.log(`  Sub-batch ${i + 1}/${numBatches}: translating articles ${start + 1}-${end}`);
+
+    const batchResults = await translateSingleBatch(batchItems);
+
+    // 合并结果
+    for (const [id, result] of batchResults) {
+      allResults.set(id, result);
+    }
+  }
+
+  console.log(`Successfully translated ${allResults.size}/${totalArticles} articles`);
+  return allResults;
 }
 
 // 单篇翻译（保留作为备用）
