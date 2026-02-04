@@ -27,6 +27,18 @@
     {
       "path": "/api/cron?batch=6",
       "schedule": "6 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=7",
+      "schedule": "7 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=8",
+      "schedule": "8 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=9",
+      "schedule": "9 */6 * * *"
     }
   ]
 }
