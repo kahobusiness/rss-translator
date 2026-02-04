@@ -8,10 +8,10 @@ import { appendItems, getExistingGuids, TranslatedItem } from '@/lib/storage';
 export const maxDuration = 300; // Pro 版最大 300 秒
 export const dynamic = 'force-dynamic';
 
-// 每批处理的 feed 数量（Pro 版可以处理更多）
-const FEEDS_PER_BATCH = 15;
+// 每批处理的 feed 数量
+const FEEDS_PER_BATCH = 10;
 // 每个 feed 最多翻译的文章数
-const MAX_ITEMS_PER_FEED = 3;
+const MAX_ITEMS_PER_FEED = 2;
 
 async function processFeed(feedConfig: FeedConfig) {
   console.log(`Processing feed: ${feedConfig.name}`);
