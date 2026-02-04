@@ -2,15 +2,15 @@ import Anthropic from '@anthropic-ai/sdk';
 
 // Zenmux API 配置
 // 文档: https://zenmux.ai/docs/api/anthropic/create-messages-new.html
-const ZENMUX_BASE_URL = process.env.API_BASE_URL || 'https://api.zenmux.ai';
+const ZENMUX_BASE_URL = process.env.API_BASE_URL || 'https://zenmux.ai/api/anthropic';
 
 const anthropic = new Anthropic({
   apiKey: process.env.API_KEY || process.env.ANTHROPIC_API_KEY,
   baseURL: ZENMUX_BASE_URL,
 });
 
-// 可配置的模型名称
-const MODEL_NAME = process.env.MODEL_NAME || 'claude-sonnet-4-20250514';
+// 可配置的模型名称（Zenmux 格式: anthropic/claude-sonnet-4.5）
+const MODEL_NAME = process.env.MODEL_NAME || 'anthropic/claude-sonnet-4.5';
 
 export interface TranslationResult {
   translatedTitle: string;

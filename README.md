@@ -42,9 +42,9 @@ https://your-domain.vercel.app/api/feed/paulgraham-com
 
 | 环境变量 | 说明 | 示例 |
 |---------|------|------|
-| `API_KEY` | Zenmux API 密钥（必须） | `zm-xxx...` |
-| `API_BASE_URL` | API 地址（可选） | `https://api.zenmux.ai`（默认） |
-| `MODEL_NAME` | 模型名称（可选） | `claude-sonnet-4-20250514`（默认） |
+| `API_KEY` | Zenmux API 密钥（必须） | 从控制台获取 |
+| `API_BASE_URL` | API 地址（可选） | `https://zenmux.ai/api/anthropic`（默认） |
+| `MODEL_NAME` | 模型名称（可选） | `anthropic/claude-sonnet-4.5`（默认） |
 
 ### 使用官方 Anthropic API
 
@@ -54,6 +54,7 @@ https://your-domain.vercel.app/api/feed/paulgraham-com
 |---------|------|
 | `API_KEY` 或 `ANTHROPIC_API_KEY` | Anthropic API 密钥 |
 | `API_BASE_URL` | `https://api.anthropic.com` |
+| `MODEL_NAME` | `claude-sonnet-4-20250514` |
 
 ### 其他环境变量
 
