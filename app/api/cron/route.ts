@@ -113,7 +113,7 @@ export async function GET(request: NextRequest) {
   const translations = await translateBatch(allItemsToTranslate);
 
   // 计算实际 API 调用次数
-  const MAX_ARTICLES_PER_API_CALL = 8;
+  const MAX_ARTICLES_PER_API_CALL = 3;
   const apiCalls = Math.ceil(allItemsToTranslate.length / MAX_ARTICLES_PER_API_CALL);
 
   // 第三步：保存翻译结果到各自的 feed

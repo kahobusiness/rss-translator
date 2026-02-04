@@ -54,10 +54,10 @@ function extractJSON(text: string): string {
   return cleaned;
 }
 
-// 每次 API 调用的最大文章数（避免超出上下文限制）
-const MAX_ARTICLES_PER_API_CALL = 8;
 // 每篇文章内容的最大字符数
-const MAX_CONTENT_LENGTH = 1500;
+const MAX_CONTENT_LENGTH = 40000;
+// 每次 API 调用的最大文章数（内容长度增加后需减少文章数）
+const MAX_ARTICLES_PER_API_CALL = 3;
 
 // 单次 API 调用翻译一批文章
 async function translateSingleBatch(
@@ -88,7 +88,7 @@ ${articlesText}
   try {
     const message = await anthropic.messages.create({
       model: MODEL_NAME,
-      max_tokens: 8192,
+      max_tokens: 16384,
       messages: [
         {
           role: 'user',
