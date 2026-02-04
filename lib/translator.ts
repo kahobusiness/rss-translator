@@ -17,9 +17,14 @@ export interface TranslationResult {
   translatedContent: string;
 }
 
+export interface TranslationInput {
+  id: string;
+  title: string;
+  content: string;
+}
+
 // 从响应文本中提取 JSON（处理 markdown 代码块包裹的情况）
 function extractJSON(text: string): string {
-  // 移除可能的 markdown 代码块标记
   let cleaned = text.trim();
 
   // 匹配 ```json ... ``` 或 ``` ... ``` 格式
@@ -28,42 +33,61 @@ function extractJSON(text: string): string {
     cleaned = codeBlockMatch[1].trim();
   }
 
-  // 如果还是不是以 { 开头，尝试找到第一个 { 和最后一个 }
-  if (!cleaned.startsWith('{')) {
-    const startIndex = cleaned.indexOf('{');
+  // 找到第一个 [ 或 { 和对应的结束符
+  const arrayStart = cleaned.indexOf('[');
+  const objectStart = cleaned.indexOf('{');
+
+  if (arrayStart !== -1 && (objectStart === -1 || arrayStart < objectStart)) {
+    // 返回数组
+    const endIndex = cleaned.lastIndexOf(']');
+    if (endIndex > arrayStart) {
+      cleaned = cleaned.substring(arrayStart, endIndex + 1);
+    }
+  } else if (objectStart !== -1) {
+    // 返回对象
     const endIndex = cleaned.lastIndexOf('}');
-    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-      cleaned = cleaned.substring(startIndex, endIndex + 1);
+    if (endIndex > objectStart) {
+      cleaned = cleaned.substring(objectStart, endIndex + 1);
     }
   }
 
   return cleaned;
 }
 
-export async function translateContent(
-  title: string,
-  content: string
-): Promise<TranslationResult> {
-  // 限制内容长度以避免token超限
-  const maxContentLength = 4000;
-  const truncatedContent = content.length > maxContentLength
-    ? content.substring(0, maxContentLength) + '...'
-    : content;
+// 批量翻译多篇文章（一次 API 调用）
+export async function translateBatch(
+  items: TranslationInput[]
+): Promise<Map<string, TranslationResult>> {
+  if (items.length === 0) {
+    return new Map();
+  }
 
-  const prompt = `将以下RSS文章翻译成中文。保持原文的格式和结构，翻译要自然流畅。
+  // 构建批量翻译的 prompt
+  const articlesText = items.map((item, index) => {
+    // 限制每篇内容长度
+    const maxContentLength = 2000;
+    const truncatedContent = item.content.length > maxContentLength
+      ? item.content.substring(0, maxContentLength) + '...'
+      : item.content;
 
-标题: ${title}
+    return `---文章${index + 1} (ID: ${item.id})---
+标题: ${item.title}
+内容: ${truncatedContent}`;
+  }).join('\n\n');
 
-内容:
-${truncatedContent}
+  const prompt = `将以下${items.length}篇RSS文章翻译成中文。保持原文格式，翻译要自然流畅。
 
-直接返回JSON格式（不要用代码块包裹）:
-{"translatedTitle": "翻译后的标题", "translatedContent": "翻译后的内容"}`;
+${articlesText}
+
+直接返回JSON数组（不要用代码块包裹）:
+[{"id": "文章ID", "translatedTitle": "翻译后的标题", "translatedContent": "翻译后的内容"}, ...]`;
 
   try {
+    console.log(`Translating ${items.length} articles in one batch...`);
+
     const message = await anthropic.messages.create({
       model: MODEL_NAME,
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [
         {
           role: 'user',
@@ -78,36 +102,35 @@ ${truncatedContent}
 
     // 提取并解析JSON响应
     const jsonText = extractJSON(responseText);
-    const result = JSON.parse(jsonText);
+    const results = JSON.parse(jsonText) as Array<{
+      id: string;
+      translatedTitle: string;
+      translatedContent: string;
+    }>;
 
-    return {
-      translatedTitle: result.translatedTitle || title,
-      translatedContent: result.translatedContent || content,
-    };
+    // 转换为 Map
+    const resultMap = new Map<string, TranslationResult>();
+    for (const result of results) {
+      resultMap.set(result.id, {
+        translatedTitle: result.translatedTitle,
+        translatedContent: result.translatedContent,
+      });
+    }
+
+    console.log(`Successfully translated ${resultMap.size} articles`);
+    return resultMap;
   } catch (error) {
-    console.error('Translation error:', error);
-    // 翻译失败时返回原文
-    return {
-      translatedTitle: title,
-      translatedContent: content,
-    };
+    console.error('Batch translation error:', error);
+    // 翻译失败时返回空 Map，调用方会使用原文
+    return new Map();
   }
 }
 
-export async function translateBatch(
-  items: Array<{ title: string; content: string }>
-): Promise<TranslationResult[]> {
-  // 并行翻译，但限制并发数以避免API限制
-  const batchSize = 3;
-  const results: TranslationResult[] = [];
-
-  for (let i = 0; i < items.length; i += batchSize) {
-    const batch = items.slice(i, i + batchSize);
-    const batchResults = await Promise.all(
-      batch.map(item => translateContent(item.title, item.content))
-    );
-    results.push(...batchResults);
-  }
-
-  return results;
+// 单篇翻译（保留作为备用）
+export async function translateContent(
+  title: string,
+  content: string
+): Promise<TranslationResult> {
+  const results = await translateBatch([{ id: '0', title, content }]);
+  return results.get('0') || { translatedTitle: title, translatedContent: content };
 }

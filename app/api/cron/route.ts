@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getEnabledFeeds, FeedConfig } from '@/config/feeds';
-import { parseFeed } from '@/lib/rss-parser';
-import { translateContent } from '@/lib/translator';
+import { parseFeed, ParsedItem } from '@/lib/rss-parser';
+import { translateBatch, TranslationInput } from '@/lib/translator';
 import { appendItems, getExistingGuids, TranslatedItem } from '@/lib/storage';
 
 // Vercel Cron需要的配置
@@ -11,76 +11,18 @@ export const dynamic = 'force-dynamic';
 // 每批处理的 feed 数量
 const FEEDS_PER_BATCH = 10;
 // 每个 feed 最多翻译的文章数
-const MAX_ITEMS_PER_FEED = 2;
+const MAX_ITEMS_PER_FEED = 3;
 
-async function processFeed(feedConfig: FeedConfig) {
-  console.log(`Processing feed: ${feedConfig.name}`);
-
-  try {
-    // 解析RSS源
-    const feed = await parseFeed(feedConfig.url);
-
-    // 获取已翻译的文章guid，避免重复翻译
-    const existingGuids = await getExistingGuids(feedConfig.id);
-
-    // 过滤出新文章
-    const newItems = feed.items
-      .filter(item => !existingGuids.has(item.guid))
-      .slice(0, MAX_ITEMS_PER_FEED);
-
-    if (newItems.length === 0) {
-      console.log(`No new items for ${feedConfig.name}`);
-      return { feedId: feedConfig.id, feedName: feedConfig.name, processed: 0 };
-    }
-
-    console.log(`Found ${newItems.length} new items for ${feedConfig.name}`);
-
-    // 顺序翻译新文章（避免并发过多）
-    const translatedItems: TranslatedItem[] = [];
-
-    for (const item of newItems) {
-      try {
-        const translation = await translateContent(item.title, item.content);
-
-        translatedItems.push({
-          guid: item.guid,
-          originalTitle: item.title,
-          translatedTitle: translation.translatedTitle,
-          originalContent: item.content,
-          translatedContent: translation.translatedContent,
-          link: item.link,
-          pubDate: item.pubDate,
-          author: item.author,
-          categories: item.categories,
-          translatedAt: new Date().toISOString(),
-          sourceFeedId: feedConfig.id,
-          sourceFeedName: feedConfig.name,
-        });
-      } catch (error) {
-        console.error(`Error translating item "${item.title}":`, error);
-      }
-    }
-
-    // 保存翻译结果
-    if (translatedItems.length > 0) {
-      await appendItems(
-        feedConfig.id,
-        feed.title,
-        feed.description,
-        feed.link,
-        translatedItems
-      );
-    }
-
-    return { feedId: feedConfig.id, feedName: feedConfig.name, processed: translatedItems.length };
-  } catch (error) {
-    console.error(`Error processing feed ${feedConfig.name}:`, error);
-    return { feedId: feedConfig.id, feedName: feedConfig.name, processed: 0, error: String(error) };
-  }
+interface FeedWithItems {
+  config: FeedConfig;
+  feedTitle: string;
+  feedDescription?: string;
+  feedLink?: string;
+  items: ParsedItem[];
 }
 
 export async function GET(request: NextRequest) {
-  // 验证Cron密钥（可选但推荐）
+  // 验证Cron密钥
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
@@ -113,22 +55,108 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const results = [];
-  let totalProcessed = 0;
+  // 第一步：并行获取所有 feeds 的新文章
+  console.log(`Fetching ${feedsToProcess.length} feeds...`);
+  const feedsWithItems: FeedWithItems[] = [];
+  const allItemsToTranslate: TranslationInput[] = [];
 
-  // 顺序处理每个 feed（避免超时）
-  for (const feed of feedsToProcess) {
-    const result = await processFeed(feed).catch(err => ({
-      feedId: feed.id,
-      feedName: feed.name,
-      processed: 0,
-      error: String(err),
-    }));
-    results.push(result);
-    totalProcessed += result.processed;
+  await Promise.all(feedsToProcess.map(async (feedConfig) => {
+    try {
+      const feed = await parseFeed(feedConfig.url);
+      const existingGuids = await getExistingGuids(feedConfig.id);
+
+      const newItems = feed.items
+        .filter(item => !existingGuids.has(item.guid))
+        .slice(0, MAX_ITEMS_PER_FEED);
+
+      if (newItems.length > 0) {
+        console.log(`Found ${newItems.length} new items for ${feedConfig.name}`);
+        feedsWithItems.push({
+          config: feedConfig,
+          feedTitle: feed.title,
+          feedDescription: feed.description,
+          feedLink: feed.link,
+          items: newItems,
+        });
+
+        // 收集需要翻译的文章
+        for (const item of newItems) {
+          allItemsToTranslate.push({
+            id: item.guid,
+            title: item.title,
+            content: item.content,
+          });
+        }
+      } else {
+        console.log(`No new items for ${feedConfig.name}`);
+      }
+    } catch (error) {
+      console.error(`Error fetching feed ${feedConfig.name}:`, error);
+    }
+  }));
+
+  if (allItemsToTranslate.length === 0) {
+    return NextResponse.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      batch,
+      totalBatches,
+      nextBatch: batch + 1 < totalBatches ? batch + 1 : null,
+      message: 'No new items to translate',
+      totalFeeds: feeds.length,
+      processedFeeds: feedsToProcess.length,
+    });
   }
 
-  console.log(`Batch ${batch} completed. Processed: ${totalProcessed} items`);
+  // 第二步：一次 API 调用批量翻译所有文章
+  console.log(`Translating ${allItemsToTranslate.length} articles in one API call...`);
+  const translations = await translateBatch(allItemsToTranslate);
+
+  // 第三步：保存翻译结果到各自的 feed
+  let totalProcessed = 0;
+  const results = [];
+
+  for (const feedData of feedsWithItems) {
+    const translatedItems: TranslatedItem[] = [];
+
+    for (const item of feedData.items) {
+      const translation = translations.get(item.guid);
+
+      translatedItems.push({
+        guid: item.guid,
+        originalTitle: item.title,
+        translatedTitle: translation?.translatedTitle || item.title,
+        originalContent: item.content,
+        translatedContent: translation?.translatedContent || item.content,
+        link: item.link,
+        pubDate: item.pubDate,
+        author: item.author,
+        categories: item.categories,
+        translatedAt: new Date().toISOString(),
+        sourceFeedId: feedData.config.id,
+        sourceFeedName: feedData.config.name,
+      });
+    }
+
+    if (translatedItems.length > 0) {
+      await appendItems(
+        feedData.config.id,
+        feedData.feedTitle,
+        feedData.feedDescription,
+        feedData.feedLink,
+        translatedItems
+      );
+      totalProcessed += translatedItems.length;
+    }
+
+    results.push({
+      feedId: feedData.config.id,
+      feedName: feedData.config.name,
+      processed: translatedItems.length,
+    });
+  }
+
+  console.log(`Batch ${batch} completed. Processed: ${totalProcessed} items with 1 API call`);
 
   const nextBatch = batch + 1 < totalBatches ? batch + 1 : null;
 
@@ -142,8 +170,8 @@ export async function GET(request: NextRequest) {
     processedFeeds: feedsToProcess.length,
     feedRange: `${startIndex + 1}-${endIndex}`,
     totalItems: totalProcessed,
+    apiCalls: 1,
     results,
-    // 下一批的 URL（方便连续调用）
     nextBatchUrl: nextBatch !== null ? `/api/cron?batch=${nextBatch}` : null,
   });
 }
