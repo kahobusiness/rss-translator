@@ -8,8 +8,8 @@ import { appendItems, getExistingGuids, TranslatedItem } from '@/lib/storage';
 export const maxDuration = 300; // Pro 版最大 300 秒
 export const dynamic = 'force-dynamic';
 
-// 每批处理的 feed 数量
-const FEEDS_PER_BATCH = 10;
+// 每批处理的 feed 数量（减少到 5 以确保在 300s 内完成）
+const FEEDS_PER_BATCH = 5;
 // 每个 feed 最多翻译的文章数
 const MAX_ITEMS_PER_FEED = 3;
 
@@ -26,15 +26,6 @@ export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
-  // 调试日志
-  console.log('Auth debug:', {
-    hasAuthHeader: !!authHeader,
-    authHeaderPrefix: authHeader?.substring(0, 20),
-    hasCronSecret: !!cronSecret,
-    cronSecretLength: cronSecret?.length,
-    match: authHeader === `Bearer ${cronSecret}`,
-  });
-
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -43,6 +34,10 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const batchParam = searchParams.get('batch');
   const batch = batchParam !== null ? parseInt(batchParam, 10) : 0;
+
+  const startTime = Date.now();
+  // 250s deadline（300s 限制 - 50s 缓冲用于 RSS 抓取和保存）
+  const deadline = startTime + 250 * 1000;
 
   console.log(`Starting cron job, batch ${batch}...`);
 
@@ -119,7 +114,7 @@ export async function GET(request: NextRequest) {
 
   // 第二步：批量翻译所有文章（自动分批避免超出上下文限制）
   console.log(`Translating ${allItemsToTranslate.length} articles...`);
-  const translations = await translateBatch(allItemsToTranslate);
+  const translations = await translateBatch(allItemsToTranslate, deadline);
 
   // 计算实际 API 调用次数
   const MAX_ARTICLES_PER_API_CALL = 3;
