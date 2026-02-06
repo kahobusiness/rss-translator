@@ -6,7 +6,7 @@ export function needsFetch(content: string): boolean {
   return content.trim().length < MIN_CONTENT_LENGTH;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   return Promise.race([
     promise,
     new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),

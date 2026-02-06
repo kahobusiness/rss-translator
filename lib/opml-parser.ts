@@ -82,12 +82,14 @@ export async function fetchOPML(url: string): Promise<OPMLFeed> {
     if (gistMatch) {
       const gistId = gistMatch[2];
       const apiUrl = `https://api.github.com/gists/${gistId}`;
-      const response = await fetch(apiUrl, {
-        headers: {
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'RSS-Translator/1.0',
-        },
-      });
+      const headers: Record<string, string> = {
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'RSS-Translator/1.0',
+      };
+      if (process.env.GITHUB_TOKEN) {
+        headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
+      }
+      const response = await fetch(apiUrl, { headers });
 
       if (!response.ok) {
         throw new Error(`Failed to fetch gist: ${response.status}`);

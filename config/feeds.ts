@@ -1,3 +1,4 @@
+import { put, head } from '@vercel/blob';
 import { fetchOPML, OPMLOutline } from '@/lib/opml-parser';
 
 export interface FeedConfig {
@@ -12,10 +13,53 @@ export interface FeedConfig {
 export const OPML_URL = process.env.OPML_URL ||
   'https://gist.githubusercontent.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b/raw/426957f043dc0054f95aae6c19de1d0b4ecc2bb2/hn-popular-blogs-2025.opml';
 
-// 缓存已加载的feeds
+// 内存缓存（同一函数实例内有效）
 let cachedFeeds: FeedConfig[] | null = null;
 let cacheTime: number = 0;
 const CACHE_DURATION = 60 * 60 * 1000; // 1小时缓存
+
+const OPML_CACHE_PATH = 'feeds/_opml_cache.json';
+
+interface OPMLCache {
+  feeds: FeedConfig[];
+  cachedAt: number;
+}
+
+function isBlobEnabled(): boolean {
+  return !!process.env.BLOB_READ_WRITE_TOKEN;
+}
+
+async function loadCachedOPML(): Promise<FeedConfig[] | null> {
+  if (!isBlobEnabled()) return null;
+  try {
+    const meta = await head(OPML_CACHE_PATH);
+    const res = await fetch(meta.url);
+    if (!res.ok) return null;
+    const cache = (await res.json()) as OPMLCache;
+    // 检查 TTL
+    if (Date.now() - cache.cachedAt < CACHE_DURATION) {
+      return cache.feeds;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveCachedOPML(feeds: FeedConfig[]): Promise<void> {
+  if (!isBlobEnabled()) return;
+  try {
+    const cache: OPMLCache = { feeds, cachedAt: Date.now() };
+    await put(OPML_CACHE_PATH, JSON.stringify(cache), {
+      access: 'public',
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: 'application/json',
+    });
+  } catch (error) {
+    console.error('Failed to save OPML cache to blob:', error);
+  }
+}
 
 function outlineToFeedConfig(outline: OPMLOutline): FeedConfig {
   return {
@@ -28,8 +72,17 @@ function outlineToFeedConfig(outline: OPMLOutline): FeedConfig {
 }
 
 export async function loadFeedsFromOPML(): Promise<FeedConfig[]> {
-  // 检查缓存是否有效
+  // 检查内存缓存
   if (cachedFeeds && Date.now() - cacheTime < CACHE_DURATION) {
+    return cachedFeeds;
+  }
+
+  // 检查 Blob 缓存
+  const blobCached = await loadCachedOPML();
+  if (blobCached) {
+    cachedFeeds = blobCached;
+    cacheTime = Date.now();
+    console.log(`Loaded ${cachedFeeds.length} feeds from OPML blob cache`);
     return cachedFeeds;
   }
 
@@ -39,10 +92,14 @@ export async function loadFeedsFromOPML(): Promise<FeedConfig[]> {
     cachedFeeds = opml.outlines.map(outlineToFeedConfig);
     cacheTime = Date.now();
     console.log(`Loaded ${cachedFeeds.length} feeds from OPML`);
+
+    // 保存到 Blob 缓存
+    await saveCachedOPML(cachedFeeds);
+
     return cachedFeeds;
   } catch (error) {
     console.error('Failed to load OPML:', error);
-    // 如果有缓存则返回旧缓存
+    // 如果有内存缓存则返回旧缓存
     if (cachedFeeds) {
       return cachedFeeds;
     }

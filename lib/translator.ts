@@ -57,6 +57,15 @@ function parseDelimiterResponse(
   return resultMap;
 }
 
+const SYSTEM_PROMPT = `你是一位专业的英中翻译。请遵循以下规则：
+- 翻译 RSS 文章的标题和正文为中文
+- 保持原文的 HTML 标签和结构不变
+- 代码块、命令行、变量名保持原文不翻译
+- 技术术语首次出现时使用"中文（English）"格式，后续直接使用中文
+- URL 和链接地址保持原文不变
+- 图片的 alt 文本需要翻译
+- 译文应自然流畅，不要翻译腔`;
+
 // 单次 API 调用翻译一批文章（使用分隔符格式避免 JSON 解析问题）
 async function translateSingleBatch(
   items: TranslationInput[]
@@ -96,6 +105,7 @@ ${formatExample}`;
       {
         model: MODEL_NAME,
         max_tokens: 16384,
+        system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: prompt }],
       },
       { signal: controller.signal }

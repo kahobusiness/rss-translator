@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Feed } from 'feed';
 import { loadFeed } from '@/lib/storage';
 import { getFeedConfig } from '@/config/feeds';
+import { escapeHtml, stripHtmlTags } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,14 +49,16 @@ export async function GET(
 
   // 添加文章
   for (const item of storedFeed.items) {
+    const safeDescription = stripHtmlTags(item.translatedContent).substring(0, 500) + '...';
+
     feed.addItem({
       title: item.translatedTitle,
       id: item.guid,
       link: item.link,
-      description: item.translatedContent.substring(0, 500) + '...',
+      description: safeDescription,
       content: `
         <div style="margin-bottom: 10px;">
-          <p><strong>原标题:</strong> ${item.originalTitle}</p>
+          <p><strong>原标题:</strong> ${escapeHtml(item.originalTitle)}</p>
         </div>
         <hr/>
         ${item.translatedContent}
