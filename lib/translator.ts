@@ -89,11 +89,19 @@ ${articlesText}
 ${formatExample}`;
 
   try {
-    const message = await anthropic.messages.create({
-      model: MODEL_NAME,
-      max_tokens: 16384,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90000);
+
+    const message = await anthropic.messages.create(
+      {
+        model: MODEL_NAME,
+        max_tokens: 16384,
+        messages: [{ role: 'user', content: prompt }],
+      },
+      { signal: controller.signal }
+    );
+
+    clearTimeout(timeout);
 
     const responseText = message.content[0].type === 'text'
       ? message.content[0].text

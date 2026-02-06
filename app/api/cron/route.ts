@@ -114,12 +114,12 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // 第 1.5 步：对内容不足的文章抓取原文网页
+  // 第 1.5 步：对内容不足的文章抓取原文网页（整体 15s 超时）
   const enrichedContentMap = new Map<string, string>();
   const itemsNeedingFetch = allItemsToTranslate.filter(item => needsFetch(item.content));
   if (itemsNeedingFetch.length > 0) {
     console.log(`Fetching full content for ${itemsNeedingFetch.length} articles...`);
-    await Promise.all(
+    const fetchPromise = Promise.all(
       itemsNeedingFetch.map(async (item) => {
         if (!item.link) return;
         const fullContent = await fetchArticleContent(item.link);
@@ -129,6 +129,11 @@ export async function GET(request: NextRequest) {
         }
       })
     );
+    await Promise.race([
+      fetchPromise,
+      new Promise((resolve) => setTimeout(resolve, 15000)),
+    ]);
+    console.log(`Article fetch done. Enriched ${enrichedContentMap.size}/${itemsNeedingFetch.length} articles.`);
   }
 
   // 第二步：批量翻译所有文章（自动分批避免超出上下文限制）
