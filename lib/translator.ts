@@ -21,6 +21,7 @@ export interface TranslationInput {
   id: string;
   title: string;
   content: string;
+  link?: string;
 }
 
 // 每篇文章内容的最大字符数

@@ -3,6 +3,7 @@ import { getEnabledFeeds, FeedConfig } from '@/config/feeds';
 import { parseFeed, ParsedItem } from '@/lib/rss-parser';
 import { translateBatch, TranslationInput } from '@/lib/translator';
 import { appendItems, getExistingGuids, TranslatedItem } from '@/lib/storage';
+import { needsFetch, fetchArticleContent } from '@/lib/article-fetcher';
 
 // Vercel Cron需要的配置
 export const maxDuration = 300; // Pro 版最大 300 秒
@@ -89,6 +90,7 @@ export async function GET(request: NextRequest) {
             id: item.guid,
             title: item.title,
             content: item.content,
+            link: item.link,
           });
         }
       } else {
@@ -110,6 +112,23 @@ export async function GET(request: NextRequest) {
       totalFeeds: feeds.length,
       processedFeeds: feedsToProcess.length,
     });
+  }
+
+  // 第 1.5 步：对内容不足的文章抓取原文网页
+  const enrichedContentMap = new Map<string, string>();
+  const itemsNeedingFetch = allItemsToTranslate.filter(item => needsFetch(item.content));
+  if (itemsNeedingFetch.length > 0) {
+    console.log(`Fetching full content for ${itemsNeedingFetch.length} articles...`);
+    await Promise.all(
+      itemsNeedingFetch.map(async (item) => {
+        if (!item.link) return;
+        const fullContent = await fetchArticleContent(item.link);
+        if (fullContent) {
+          item.content = fullContent;
+          enrichedContentMap.set(item.id, fullContent);
+        }
+      })
+    );
   }
 
   // 第二步：批量翻译所有文章（自动分批避免超出上下文限制）
@@ -134,8 +153,8 @@ export async function GET(request: NextRequest) {
         guid: item.guid,
         originalTitle: item.title,
         translatedTitle: translation?.translatedTitle || item.title,
-        originalContent: item.content,
-        translatedContent: translation?.translatedContent || item.content,
+        originalContent: enrichedContentMap.get(item.guid) || item.content,
+        translatedContent: translation?.translatedContent || (enrichedContentMap.get(item.guid) || item.content),
         link: item.link,
         pubDate: item.pubDate,
         author: item.author,
