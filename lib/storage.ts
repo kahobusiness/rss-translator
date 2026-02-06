@@ -1,3 +1,4 @@
+import { put, head, list } from '@vercel/blob';
 import { promises as fs } from 'fs';
 import path from 'path';
 
@@ -26,12 +27,70 @@ export interface StoredFeed {
   lastUpdated: string;
 }
 
-// 在Vercel上使用/tmp目录存储缓存数据
-// 注意：/tmp在serverless环境中是临时的，重启后会清空
-// 生产环境建议使用Vercel KV或外部数据库
-const DATA_DIR = process.env.NODE_ENV === 'production'
-  ? '/tmp/rss-data'
-  : path.join(process.cwd(), 'data');
+const BLOB_PREFIX = 'feeds/';
+
+function useBlob(): boolean {
+  return !!process.env.BLOB_READ_WRITE_TOKEN;
+}
+
+// ── Blob 实现 ──
+
+function blobPath(feedId: string): string {
+  return `${BLOB_PREFIX}${feedId}.json`;
+}
+
+async function blobSaveFeed(feed: StoredFeed): Promise<void> {
+  await put(blobPath(feed.feedId), JSON.stringify(feed), {
+    access: 'public',
+    addRandomSuffix: false,
+    contentType: 'application/json',
+  });
+}
+
+async function blobLoadFeed(feedId: string): Promise<StoredFeed | null> {
+  try {
+    const meta = await head(blobPath(feedId));
+    const res = await fetch(meta.url);
+    if (!res.ok) return null;
+    return (await res.json()) as StoredFeed;
+  } catch {
+    return null;
+  }
+}
+
+async function blobLoadAllFeeds(): Promise<StoredFeed[]> {
+  try {
+    let allBlobs: { url: string }[] = [];
+    let cursor: string | undefined;
+    do {
+      const result = await list({ prefix: BLOB_PREFIX, cursor });
+      allBlobs = allBlobs.concat(result.blobs);
+      cursor = result.hasMore ? result.cursor : undefined;
+    } while (cursor);
+
+    if (allBlobs.length === 0) return [];
+
+    const feeds = await Promise.all(
+      allBlobs.map(async (blob) => {
+        try {
+          const res = await fetch(blob.url);
+          if (!res.ok) return null;
+          return (await res.json()) as StoredFeed;
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    return feeds.filter((f): f is StoredFeed => f !== null);
+  } catch {
+    return [];
+  }
+}
+
+// ── 文件系统 fallback（本地开发） ──
+
+const DATA_DIR = path.join(process.cwd(), 'data');
 
 async function ensureDataDir() {
   try {
@@ -45,22 +104,63 @@ function getFilePath(feedId: string): string {
   return path.join(DATA_DIR, `${feedId}.json`);
 }
 
-export async function saveFeed(feed: StoredFeed): Promise<void> {
+async function fsSaveFeed(feed: StoredFeed): Promise<void> {
   await ensureDataDir();
-  const filePath = getFilePath(feed.feedId);
-  await fs.writeFile(filePath, JSON.stringify(feed, null, 2), 'utf-8');
+  await fs.writeFile(getFilePath(feed.feedId), JSON.stringify(feed, null, 2), 'utf-8');
 }
 
-export async function loadFeed(feedId: string): Promise<StoredFeed | null> {
+async function fsLoadFeed(feedId: string): Promise<StoredFeed | null> {
   await ensureDataDir();
-  const filePath = getFilePath(feedId);
-
   try {
-    const data = await fs.readFile(filePath, 'utf-8');
+    const data = await fs.readFile(getFilePath(feedId), 'utf-8');
     return JSON.parse(data);
   } catch {
     return null;
   }
+}
+
+async function fsLoadAllFeeds(): Promise<StoredFeed[]> {
+  await ensureDataDir();
+  try {
+    const files = await fs.readdir(DATA_DIR);
+    const jsonFiles = files.filter(f => f.endsWith('.json'));
+    const feeds: StoredFeed[] = [];
+    for (const file of jsonFiles) {
+      try {
+        const data = await fs.readFile(path.join(DATA_DIR, file), 'utf-8');
+        feeds.push(JSON.parse(data));
+      } catch {
+        // 跳过损坏的文件
+      }
+    }
+    return feeds;
+  } catch {
+    return [];
+  }
+}
+
+// ── 公开 API（接口不变） ──
+
+export async function saveFeed(feed: StoredFeed): Promise<void> {
+  if (useBlob()) {
+    await blobSaveFeed(feed);
+  } else {
+    await fsSaveFeed(feed);
+  }
+}
+
+export async function loadFeed(feedId: string): Promise<StoredFeed | null> {
+  if (useBlob()) {
+    return blobLoadFeed(feedId);
+  }
+  return fsLoadFeed(feedId);
+}
+
+export async function loadAllFeeds(): Promise<StoredFeed[]> {
+  if (useBlob()) {
+    return blobLoadAllFeeds();
+  }
+  return fsLoadAllFeeds();
 }
 
 export async function getExistingGuids(feedId: string): Promise<Set<string>> {
@@ -91,30 +191,6 @@ export async function appendItems(
   feed.items = feed.items.slice(0, 100);
 
   await saveFeed(feed);
-}
-
-// 加载所有已存储的feeds
-export async function loadAllFeeds(): Promise<StoredFeed[]> {
-  await ensureDataDir();
-
-  try {
-    const files = await fs.readdir(DATA_DIR);
-    const jsonFiles = files.filter(f => f.endsWith('.json'));
-
-    const feeds: StoredFeed[] = [];
-    for (const file of jsonFiles) {
-      try {
-        const data = await fs.readFile(path.join(DATA_DIR, file), 'utf-8');
-        feeds.push(JSON.parse(data));
-      } catch {
-        // 跳过损坏的文件
-      }
-    }
-
-    return feeds;
-  } catch {
-    return [];
-  }
 }
 
 // 获取所有翻译过的文章（按时间排序）
