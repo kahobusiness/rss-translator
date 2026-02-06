@@ -43,6 +43,7 @@ async function blobSaveFeed(feed: StoredFeed): Promise<void> {
   await put(blobPath(feed.feedId), JSON.stringify(feed), {
     access: 'public',
     addRandomSuffix: false,
+    allowOverwrite: true,
     contentType: 'application/json',
   });
 }
