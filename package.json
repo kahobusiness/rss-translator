@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
+    "@extractus/article-extractor": "^8.0.20",
     "@vercel/blob": "^2.1.0",
     "feed": "^4.2.2",
     "next": "14.2.20",
