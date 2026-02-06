@@ -39,6 +39,42 @@
     {
       "path": "/api/cron?batch=9",
       "schedule": "9 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=10",
+      "schedule": "10 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=11",
+      "schedule": "11 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=12",
+      "schedule": "12 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=13",
+      "schedule": "13 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=14",
+      "schedule": "14 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=15",
+      "schedule": "15 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=16",
+      "schedule": "16 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=17",
+      "schedule": "17 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=18",
+      "schedule": "18 */6 * * *"
     }
   ]
 }
