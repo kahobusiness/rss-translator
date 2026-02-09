@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { Feed } from 'feed';
 import { getAllTranslatedItems } from '@/lib/storage';
+import { escapeHtml, stripHtmlTags } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,15 +32,17 @@ export async function GET() {
       ? `[${item.sourceFeedName}] ${item.translatedTitle}`
       : item.translatedTitle;
 
+    const safeDescription = stripHtmlTags(item.translatedContent).substring(0, 500) + '...';
+
     feed.addItem({
       title: titleWithSource,
       id: item.guid,
       link: item.link,
-      description: item.translatedContent.substring(0, 500) + '...',
+      description: safeDescription,
       content: `
         <div style="margin-bottom: 20px;">
-          <p><strong>来源:</strong> ${item.sourceFeedName || 'Unknown'}</p>
-          <p><strong>原标题:</strong> ${item.originalTitle}</p>
+          <p><strong>来源:</strong> ${escapeHtml(item.sourceFeedName || 'Unknown')}</p>
+          <p><strong>原标题:</strong> ${escapeHtml(item.originalTitle)}</p>
         </div>
         <hr/>
         ${item.translatedContent}
