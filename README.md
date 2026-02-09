@@ -1,142 +1,109 @@
 # RSS Translator
 
-将RSS订阅源自动翻译成中文的服务，使用Claude AI进行高质量翻译，部署在Vercel上。
+将精选英文技术博客自动翻译成中文的 RSS 服务。基于 Claude AI 翻译，部署在 Vercel 上，输出标准 RSS 格式，可直接在 Reeder 等阅读器中订阅。
 
-## 功能
+## 特性
 
-- 从OPML文件自动加载RSS源（默认使用 [HN Popular Blogs 2025](https://gist.github.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b)）
-- 使用Claude API将内容翻译成中文（支持 Zenmux 等第三方平台）
-- 支持聚合订阅（所有源合并）和单独订阅
-- 翻译后的文章标注原始来源，方便分类阅读
-- 生成标准RSS格式输出，兼容Reeder等阅读器
+- 从 92 个 HN 热门博客中精选 30 个高质量信源，覆盖 AI、安全、系统、创业等领域
+- Claude AI 翻译，带专业 system prompt（保留代码/HTML 结构、技术术语首次标注英文）
+- RSS 内容不足时自动抓取原文全文，提升翻译质量
+- 翻译失败自动重试，不遗漏任何文章
+- 聚合订阅 + 单源订阅，文章标题标注来源
+- Vercel Blob 持久化存储，聚合索引加速查询
 
-## 部署步骤
+## 快速开始
 
-### 1. Fork或克隆此项目
+### 部署到 Vercel
 
-### 2. 在Vercel上部署
+1. Fork 此项目，在 [Vercel](https://vercel.com) 中导入
+2. 配置环境变量（见下方）
+3. 部署完成后，在 RSS 阅读器中订阅：
 
-1. 访问 [Vercel](https://vercel.com) 并导入此项目
-2. 配置环境变量（见下方 API 配置说明）
-
-### 3. 订阅翻译内容
-
-部署完成后，在Reeder等RSS阅读器中添加：
-
-**推荐 - 聚合订阅（所有源合并）：**
 ```
+# 推荐 — 聚合订阅（30 个源合并）
 https://your-domain.vercel.app/api/feed/all
-```
 
-**单独订阅某个源：**
-```
+# 单独订阅
 https://your-domain.vercel.app/api/feed/simonwillison-net
 https://your-domain.vercel.app/api/feed/paulgraham-com
 ```
 
-## API 配置
+### 本地开发
 
-### 使用 Zenmux（推荐）
+```bash
+npm install
+cp .env.example .env.local  # 编辑填入 API 密钥
+npm run dev                  # http://localhost:3000
+```
 
-[Zenmux](https://zenmux.ai) 是一个 Claude API 中转平台，配置方式：
+## 环境变量
 
-| 环境变量 | 说明 | 示例 |
-|---------|------|------|
-| `API_KEY` | Zenmux API 密钥（必须） | 从控制台获取 |
-| `API_BASE_URL` | API 地址（可选） | `https://zenmux.ai/api/anthropic`（默认） |
-| `MODEL_NAME` | 模型名称（可选） | `anthropic/claude-sonnet-4.5`（默认） |
+### 翻译 API（必须配置其一）
 
-### 使用官方 Anthropic API
+**Zenmux（默认）：**
 
-如果想使用 Claude 官方 API：
+| 变量 | 说明 |
+|------|------|
+| `API_KEY` | Zenmux API 密钥 |
+| `API_BASE_URL` | 可选，默认 `https://zenmux.ai/api/anthropic` |
+| `MODEL_NAME` | 可选，默认 `anthropic/claude-sonnet-4.5` |
 
-| 环境变量 | 说明 |
-|---------|------|
-| `API_KEY` 或 `ANTHROPIC_API_KEY` | Anthropic API 密钥 |
-| `API_BASE_URL` | `https://api.anthropic.com` |
-| `MODEL_NAME` | `claude-sonnet-4-20250514` |
+**官方 Anthropic API：**
 
-### 其他环境变量
+| 变量 | 说明 |
+|------|------|
+| `API_KEY` | Anthropic API 密钥 |
+| `API_BASE_URL` | 设为 `https://api.anthropic.com` |
+| `MODEL_NAME` | 设为 `claude-sonnet-4-20250514` |
 
-| 环境变量 | 说明 | 必须 |
-|---------|------|------|
-| `CRON_SECRET` | 保护 cron 端点的密钥 | 可选 |
-| `OPML_URL` | 自定义 OPML 源地址 | 可选 |
+### 存储与其他
 
-## API端点
+| 变量 | 必须 | 说明 |
+|------|------|------|
+| `BLOB_READ_WRITE_TOKEN` | 生产环境必须 | Vercel Blob 存储 token |
+| `CRON_SECRET` | 推荐 | 保护 cron 端点的 Bearer token |
+| `OPML_URL` | 可选 | 自定义 OPML 源地址 |
+| `GITHUB_TOKEN` | 可选 | 避免 GitHub API 匿名限流 |
+
+## API 端点
 
 | 端点 | 描述 |
 |------|------|
-| `/api/feeds` | 获取所有可用的翻译源列表（JSON） |
-| `/api/feed/all` | 聚合所有源的翻译RSS（推荐） |
-| `/api/feed/[id]` | 获取特定源的翻译RSS |
-| `/api/cron` | 触发内容更新（由Vercel Cron自动调用） |
+| `/api/feed/all` | 聚合所有源的翻译 RSS（推荐订阅） |
+| `/api/feed/[id]` | 单个源的翻译 RSS |
+| `/api/feeds` | 所有可用源列表（JSON） |
+| `/api/cron?batch=N` | 定时任务入口（Vercel Cron 自动调用） |
 
-## 自定义RSS源
+## 信源管理
 
-默认从HN Popular Blogs 2025 OPML加载约90个博客源。你可以通过设置 `OPML_URL` 环境变量使用自己的OPML文件。
+默认从 [HN Popular Blogs 2025 OPML](https://gist.github.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b) 加载 92 个博客源，通过 `config/feeds.ts` 中的 `CURATED_FEED_IDS` 白名单筛选为 30 个精选信源。
 
-OPML文件格式示例：
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<opml version="2.0">
-  <head><title>My Feeds</title></head>
-  <body>
-    <outline text="Blogs" title="Blogs">
-      <outline type="rss" text="Example Blog" title="Example Blog"
-               xmlUrl="https://example.com/feed.xml" htmlUrl="https://example.com"/>
-    </outline>
-  </body>
-</opml>
-```
+当前精选覆盖的领域：
+
+| 领域 | 数量 | 代表信源 |
+|------|------|----------|
+| AI 与产品趋势 | 8 | Simon Willison, Paul Graham, Mitchell Hashimoto |
+| 科技行业与文化 | 5 | Daring Fireball, Cory Doctorow, Ed Zitron |
+| 系统与工程实践 | 6 | antirez, Rachel Kroll, Dan Abramov |
+| 安全 | 3 | Krebs on Security, Troy Hunt, lcamtuf |
+| 硬件与底层 | 3 | Ken Shirriff, Matt Godbolt, Bert Hubert |
+| 科学/数学/复古 | 3 | Gwern, John D. Cook, Fabien Sanglard |
+| 行业分析 | 2 | Derek Thompson, Dynomight |
+
+修改精选列表：编辑 `config/feeds.ts` 中的 `CURATED_FEED_IDS` Set。设为 `null` 可使用 OPML 中的全部信源。
 
 ## 定时更新
 
-默认配置为每天自动更新一次（通过Vercel Cron）。
+`vercel.json` 配置了 6 个 cron 批次（batch 0-5），每 6 小时交错执行，每批处理 5 个 feed。每个 feed 每次最多翻译 3 篇新文章。
 
-可以在 `vercel.json` 中修改更新频率：
+翻译失败的文章会被标记为 `translated: false`，在下次 cron 中自动重试。
 
-```json
-{
-  "crons": [
-    {
-      "path": "/api/cron",
-      "schedule": "0 */6 * * *"
-    }
-  ]
-}
-```
+## 存储
 
-> 注意：Vercel免费版Cron最短间隔为1天，Pro版支持更频繁的调度。
+- **生产环境**：Vercel Blob（持久化）
+- **本地开发**：`./data/` 目录（文件系统）
 
-## 本地开发
-
-```bash
-# 安装依赖
-npm install
-
-# 复制环境变量文件
-cp .env.example .env.local
-
-# 编辑.env.local，填入你的API密钥
-
-# 启动开发服务器
-npm run dev
-```
-
-## 存储说明
-
-- 当前使用文件系统存储翻译结果
-- 开发环境：`./data/` 目录
-- 生产环境：`/tmp/rss-data/` 目录（Vercel Serverless临时存储）
-
-> 注意：`/tmp`在Serverless环境中是临时的，函数冷启动后会清空。生产环境建议升级到 Vercel KV 或外部数据库进行持久化存储。
-
-## 翻译说明
-
-- 由于源较多（约90个），每次Cron执行只处理部分源的新文章
-- 每个源每次最多翻译5篇新文章
-- 翻译会消耗 API 额度，请注意用量
+每个 feed 保留最近 100 篇文章。聚合索引 `_recent_items.json` 缓存最新 100 篇，避免全量扫描。
 
 ## License
 
