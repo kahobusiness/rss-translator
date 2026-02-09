@@ -13,6 +13,48 @@ export interface FeedConfig {
 export const OPML_URL = process.env.OPML_URL ||
   'https://gist.githubusercontent.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b/raw/426957f043dc0054f95aae6c19de1d0b4ecc2bb2/hn-popular-blogs-2025.opml';
 
+// 精选信源白名单（从 92 个中筛选的 30 个高质量信源）
+// 设为 null 则不过滤，使用 OPML 中的全部信源
+const CURATED_FEED_IDS: Set<string> | null = new Set([
+  // AI 与产品趋势
+  'simonwillison-net',
+  'garymarcus-substack-com',
+  'mitchellh-com',
+  'paulgraham-com',
+  'steveblank-com',
+  'ericmigi-com',
+  'dwarkesh-com',
+  'geohot-github-io',
+  // 科技行业与文化洞察
+  'daringfireball-net',
+  'pluralistic-net',
+  'wheresyoured-at',
+  'anildash-com',
+  'construction-physics-com',
+  // 系统与工程实践
+  'antirez-com',
+  'rachelbythebay-com',
+  'lucumr-pocoo-org',
+  'overreacted-io',
+  'buttondown-com-hillelwayne',
+  'devblogs-microsoft-com-oldnewthing',
+  // 安全
+  'krebsonsecurity-com',
+  'troyhunt-com',
+  'lcamtuf-substack-com',
+  // 硬件与底层
+  'righto-com',
+  'xania-org',
+  'berthub-eu',
+  // 科学/数学 + 复古
+  'gwern-net',
+  'johndcook-com',
+  'fabiensanglard-net',
+  // 行业分析
+  'derekthompson-org',
+  'dynomight-net',
+]);
+
 // 内存缓存（同一函数实例内有效）
 let cachedFeeds: FeedConfig[] | null = null;
 let cacheTime: number = 0;
@@ -127,7 +169,7 @@ export async function getFeedConfig(id: string): Promise<FeedConfig | undefined>
 
 export async function getEnabledFeeds(): Promise<FeedConfig[]> {
   const feeds = await loadFeedsFromOPML();
-  return feeds.filter(feed => feed.enabled);
+  return feeds.filter(feed => feed.enabled && (!CURATED_FEED_IDS || CURATED_FEED_IDS.has(feed.id)));
 }
 
 // 获取所有feed的id列表
