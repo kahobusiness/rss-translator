@@ -9,8 +9,8 @@ const anthropic = new Anthropic({
   baseURL: ZENMUX_BASE_URL,
 });
 
-// 可配置的模型名称（Zenmux 格式: anthropic/claude-sonnet-4.5）
-const MODEL_NAME = process.env.MODEL_NAME || 'anthropic/claude-sonnet-4.5';
+// 可配置的模型名称（Zenmux 格式: provider/model）
+const MODEL_NAME = process.env.MODEL_NAME || 'minimax/minimax-m2.7-highspeed';
 
 export interface TranslationResult {
   translatedTitle: string;
@@ -113,9 +113,8 @@ ${formatExample}`;
 
     clearTimeout(timeout);
 
-    const responseText = message.content[0].type === 'text'
-      ? message.content[0].text
-      : '';
+    const textBlock = message.content.find(block => block.type === 'text');
+    const responseText = textBlock && 'text' in textBlock ? textBlock.text : '';
 
     return parseDelimiterResponse(responseText, items);
   } catch (error) {

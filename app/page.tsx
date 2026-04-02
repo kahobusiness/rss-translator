@@ -4,29 +4,20 @@ export const revalidate = 3600;
 
 // 信源分类映射
 const FEED_CATEGORIES: Record<string, string[]> = {
-  'AI 与产品趋势': [
-    'simonwillison-net', 'garymarcus-substack-com', 'mitchellh-com',
-    'paulgraham-com', 'steveblank-com', 'ericmigi-com', 'dwarkesh-com', 'geohot-github-io',
-  ],
-  '科技行业与文化': [
-    'daringfireball-net', 'pluralistic-net', 'wheresyoured-at',
-    'anildash-com', 'construction-physics-com',
+  'AI 与深度思考': [
+    'simonwillison-net', 'dwarkesh-com', 'gwern-net',
   ],
   '系统与工程实践': [
-    'antirez-com', 'rachelbythebay-com', 'lucumr-pocoo-org',
-    'overreacted-io', 'buttondown-com-hillelwayne', 'devblogs-microsoft-com-oldnewthing',
+    'antirez-com', 'rachelbythebay-com', 'lucumr-pocoo-org', 'mitchellh-com',
+  ],
+  '科技行业与文化': [
+    'daringfireball-net', 'construction-physics-com', 'paulgraham-com',
   ],
   '安全': [
     'krebsonsecurity-com', 'troyhunt-com', 'lcamtuf-substack-com',
   ],
   '硬件与底层': [
-    'righto-com', 'xania-org', 'berthub-eu',
-  ],
-  '科学 / 数学 / 复古': [
-    'gwern-net', 'johndcook-com', 'fabiensanglard-net',
-  ],
-  '行业分析': [
-    'derekthompson-org', 'dynomight-net',
+    'righto-com', 'fabiensanglard-net',
   ],
 };
 
@@ -56,7 +47,7 @@ export default async function Home() {
 
       <h2>精选信源</h2>
       <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1.5rem' }}>
-        从 HN Popular Blogs 2025 中精选，覆盖 AI、安全、系统、创业等 7 个领域。
+        从 HN Popular Blogs 2025 中精选，覆盖 AI、安全、系统、科技、硬件 5 个领域。
       </p>
 
       {Object.entries(FEED_CATEGORIES).map(([category, ids]) => {
