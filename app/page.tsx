@@ -29,7 +29,7 @@ export default async function Home() {
     <main style={{ padding: '2rem', fontFamily: 'system-ui, sans-serif', maxWidth: '900px', margin: '0 auto' }}>
       <h1 style={{ marginBottom: '0.5rem' }}>RSS Translator</h1>
       <p style={{ color: '#555', marginTop: 0 }}>
-        精选 {feeds.length} 个英文技术博客，使用 Claude AI 自动翻译成中文。每 6 小时更新。
+        精选 {feeds.length} 个英文技术博客，使用 MiniMax-M2.7 自动翻译成中文。每 6 小时更新。
       </p>
 
       <div style={{ background: '#e8f5e9', padding: '1rem', borderRadius: '8px', marginBottom: '2rem' }}>
@@ -102,11 +102,11 @@ export default async function Home() {
 
       <div style={{ marginTop: '2rem', padding: '1rem', background: '#f5f5f5', borderRadius: '8px', fontSize: '0.85rem', color: '#888' }}>
         <p style={{ margin: '0 0 0.5rem 0' }}>
-          <strong>工作原理：</strong>每 6 小时通过 Vercel Cron 自动抓取新文章，使用 Claude AI 翻译后存入 Vercel Blob。
-          翻译失败的文章会在下次运行时自动重试。
+          <strong>工作原理：</strong>每 6 小时通过 Vercel Cron 自动抓取新文章，使用 MiniMax-M2.7 翻译后存入 Vercel Blob。
+          长文自动按 HTML 边界切片，批次内 5 路并发处理，翻译失败的文章会在下次运行时自动重试。
         </p>
         <p style={{ margin: 0 }}>
-          Powered by Claude AI &middot; Deployed on Vercel &middot; <a href="https://github.com" style={{ color: '#888' }}>GitHub</a>
+          Powered by MiniMax-M2.7 &middot; Deployed on Vercel &middot; <a href="https://github.com/kahobusiness/rss-translator" style={{ color: '#888' }}>GitHub</a>
         </p>
       </div>
     </main>
