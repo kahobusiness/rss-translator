@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { parseFeed } from '@/lib/rss-parser';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 // 临时调试端点：直接打 MiniMax，返回原始响应/错误，定位 auth vs format
 export async function GET(request: NextRequest) {
@@ -31,12 +32,17 @@ export async function GET(request: NextRequest) {
     baseURL,
   });
 
-  // 复用真实 batch prompt 结构，3 篇短文测试 ARTICLE_N 格式
-  const items = [
-    { title: 'Hello World', content: '<p>This is the first test article.</p>' },
-    { title: 'Quick Brown Fox', content: '<p>The quick brown fox jumps over the lazy dog.</p>' },
-    { title: 'Lorem Ipsum', content: '<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>' },
-  ];
+  // 用真实 feed 的前 N 条（与 cron 完全一致），定位 batch 失败的真实原因
+  const feedUrl = request.nextUrl.searchParams.get('feed') || 'https://krebsonsecurity.com/feed/';
+  const n = Math.min(parseInt(request.nextUrl.searchParams.get('n') || '3', 10), 5);
+  let items: { title: string; content: string }[];
+  try {
+    const feed = await parseFeed(feedUrl);
+    items = feed.items.slice(0, n).map(i => ({ title: i.title, content: i.content }));
+  } catch (e) {
+    return NextResponse.json({ ok: false, meta, fetchError: (e as Error).message });
+  }
+  const inputCharsList = items.map(i => i.title.length + i.content.length);
   const articlesText = items.map((it, i) => `---文章${i + 1}---\n标题: ${it.title}\n内容: ${it.content}`).join('\n\n');
   const formatExample = items.map((_, i) => {
     const t = `ARTICLE_${i + 1}`;
@@ -46,23 +52,36 @@ export async function GET(request: NextRequest) {
   const SYSTEM_PROMPT = `你是一位专业的英中翻译。请遵循以下规则：\n- 翻译 RSS 文章的标题和正文为中文\n- 保持原文的 HTML 标签和结构不变\n- 代码块、命令行、变量名保持原文不翻译\n- 技术术语首次出现时使用"中文（English）"格式，后续直接使用中文\n- URL 和链接地址保持原文不变\n- 图片的 alt 文本需要翻译\n- 译文应自然流畅，不要翻译腔`;
 
   try {
+    const t0 = Date.now();
     const msg = await client.messages.create({
       model,
-      max_tokens: 2000,
+      max_tokens: 50000,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userPrompt }],
     });
+    const elapsedMs = Date.now() - t0;
     const block = msg.content.find(b => b.type === 'text');
     const text = block && 'text' in block ? block.text : '';
-    const tagFound = /<ARTICLE_1_TITLE>/i.test(text);
+    const tagsFound: Record<string, { title: boolean; content: boolean }> = {};
+    for (let i = 1; i <= items.length; i++) {
+      tagsFound[`ARTICLE_${i}`] = {
+        title: new RegExp(`<ARTICLE_${i}_TITLE>[\\s\\S]*?</ARTICLE_${i}_TITLE>`).test(text),
+        content: new RegExp(`<ARTICLE_${i}_CONTENT>[\\s\\S]*?</ARTICLE_${i}_CONTENT>`).test(text),
+      };
+    }
     return NextResponse.json({
       ok: true,
       meta,
+      feedUrl,
+      itemCount: items.length,
+      inputCharsList,
       stopReason: msg.stop_reason,
       usage: msg.usage,
-      tagFound,
+      elapsedMs,
       textLen: text.length,
-      text,
+      tagsFound,
+      tail: text.slice(-300),
+      head: text.slice(0, 300),
     });
   } catch (e) {
     const err = e as { status?: number; message?: string; error?: unknown };
