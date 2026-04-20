@@ -35,6 +35,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const batchParam = searchParams.get('batch');
   const batch = batchParam !== null ? parseInt(batchParam, 10) : 0;
+  // dryRun=1 时只跑翻译流程，不写 Blob，结果直接回包，便于在 preview 验证
+  const dryRun = searchParams.get('dryRun') === '1';
 
   const startTime = Date.now();
   // 250s deadline（300s 限制 - 50s 缓冲用于 RSS 抓取和保存）
@@ -189,13 +191,15 @@ export async function GET(request: NextRequest) {
     }
 
     if (translatedItems.length > 0) {
-      await appendItems(
-        feedData.config.id,
-        feedData.feedTitle,
-        feedData.feedDescription,
-        feedData.feedLink,
-        translatedItems
-      );
+      if (!dryRun) {
+        await appendItems(
+          feedData.config.id,
+          feedData.feedTitle,
+          feedData.feedDescription,
+          feedData.feedLink,
+          translatedItems
+        );
+      }
       totalProcessed += translatedItems.length;
       allTranslatedItems.push(...translatedItems);
     }
@@ -209,16 +213,28 @@ export async function GET(request: NextRequest) {
   }
 
   // 更新聚合索引
-  if (totalProcessed > 0) {
+  if (totalProcessed > 0 && !dryRun) {
     await saveRecentIndex(allTranslatedItems);
   }
 
-  console.log(`Batch ${batch} completed. Processed: ${totalProcessed} items with ${apiCalls} API call(s)`);
+  console.log(`Batch ${batch} completed${dryRun ? ' [DRY RUN]' : ''}. Processed: ${totalProcessed} items with ${apiCalls} API call(s)`);
 
   const nextBatch = batch + 1 < totalBatches ? batch + 1 : null;
 
+  // dry-run 时回传翻译样本（截断），用于人眼验证是否真的翻成了中文
+  const samples = dryRun
+    ? allTranslatedItems.slice(0, 5).map(i => ({
+        feedId: i.sourceFeedId,
+        translated: i.translated,
+        originalTitle: i.originalTitle,
+        translatedTitle: i.translatedTitle,
+        translatedContentSnippet: i.translatedContent.slice(0, 240),
+      }))
+    : undefined;
+
   return NextResponse.json({
     success: true,
+    dryRun,
     timestamp: new Date().toISOString(),
     batch,
     totalBatches,
@@ -229,6 +245,7 @@ export async function GET(request: NextRequest) {
     totalItems: totalProcessed,
     apiCalls,
     results,
+    samples,
     nextBatchUrl: nextBatch !== null ? `/api/cron?batch=${nextBatch}` : null,
     warning,
   });
