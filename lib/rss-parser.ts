@@ -1,4 +1,5 @@
 import Parser from 'rss-parser';
+import { createHash } from 'crypto';
 import { withTimeout } from '@/lib/article-fetcher';
 
 export interface ParsedItem {
@@ -26,23 +27,36 @@ const parser = new Parser({
   },
 });
 
-async function parseFeedInner(url: string): Promise<ParsedFeed> {
-  const feed = await parser.parseURL(url);
+// 无 guid/link/title 的极端场景，用内容特征派生稳定 ID，防止多条空串互相覆盖
+function stableFallbackGuid(feedUrl: string, title: string, pubDate: string, content: string): string {
+  const seed = `${feedUrl}\x00${title}\x00${pubDate}\x00${content.slice(0, 256)}`;
+  return 'gen:' + createHash('sha1').update(seed).digest('hex').slice(0, 16);
+}
+
+async function parseFeedInner(feedUrl: string): Promise<ParsedFeed> {
+  const feed = await parser.parseURL(feedUrl);
 
   return {
     title: feed.title || 'Untitled Feed',
     description: feed.description,
     link: feed.link,
-    items: feed.items.map(item => ({
-      guid: item.guid || item.link || item.title || '',
-      title: item.title || 'Untitled',
-      link: item.link || '',
-      content: item.content || item['content:encoded'] || item.contentSnippet || '',
-      contentSnippet: item.contentSnippet,
-      pubDate: item.pubDate || item.isoDate || new Date().toISOString(),
-      author: item.creator || item.author,
-      categories: item.categories,
-    })),
+    items: feed.items.map(item => {
+      const title = item.title || 'Untitled';
+      const link = item.link || '';
+      const content = item.content || item['content:encoded'] || item.contentSnippet || '';
+      const pubDate = item.pubDate || item.isoDate || new Date().toISOString();
+      const guid = item.guid || item.link || item.title || stableFallbackGuid(feedUrl, title, pubDate, content);
+      return {
+        guid,
+        title,
+        link,
+        content,
+        contentSnippet: item.contentSnippet,
+        pubDate,
+        author: item.creator || item.author,
+        categories: item.categories,
+      };
+    }),
   };
 }
 

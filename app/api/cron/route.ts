@@ -128,6 +128,7 @@ export async function GET(request: NextRequest) {
 
   // 第 1.5 步：对内容不足的文章抓取原文网页（整体 15s 超时，使用 AbortController）
   const enrichedContentMap = new Map<string, string>();
+  const enrichFailedIds = new Set<string>();
   const itemsNeedingFetch = allItemsToTranslate.filter(item => needsFetch(item.content));
   if (itemsNeedingFetch.length > 0) {
     console.log(`Fetching full content for ${itemsNeedingFetch.length} articles...`);
@@ -136,11 +137,14 @@ export async function GET(request: NextRequest) {
     try {
       await Promise.all(
         itemsNeedingFetch.map(async (item) => {
-          if (fetchController.signal.aborted || !item.link) return;
-          const fullContent = await fetchArticleContent(item.link);
-          if (fullContent) {
-            item.content = fullContent;
-            enrichedContentMap.set(item.id, fullContent);
+          if (fetchController.signal.aborted) return;
+          const result = await fetchArticleContent(item.link || '');
+          if (result.content) {
+            item.content = result.content;
+            enrichedContentMap.set(item.id, result.content);
+          } else if (result.attempted) {
+            // 真正抓取失败：跳过本轮，不用 snippet 强翻以致永久低质量
+            enrichFailedIds.add(item.id);
           }
         })
       );
@@ -149,12 +153,17 @@ export async function GET(request: NextRequest) {
     } finally {
       clearTimeout(fetchTimeout);
     }
-    console.log(`Article fetch done. Enriched ${enrichedContentMap.size}/${itemsNeedingFetch.length} articles.`);
+    console.log(
+      `Article fetch done. Enriched ${enrichedContentMap.size}/${itemsNeedingFetch.length}, skipped ${enrichFailedIds.size}.`
+    );
   }
 
+  // enrich 失败的 item 本轮不翻译，等下次 cron 重试
+  const itemsForTranslation = allItemsToTranslate.filter(i => !enrichFailedIds.has(i.id));
+
   // 第二步：批量翻译所有文章（自动分批避免超出上下文限制）
-  console.log(`Translating ${allItemsToTranslate.length} articles...`);
-  const translations = await translateBatch(allItemsToTranslate, deadline);
+  console.log(`Translating ${itemsForTranslation.length} articles (${enrichFailedIds.size} deferred)...`);
+  const translations = await translateBatch(itemsForTranslation, deadline);
 
   // 计算实际 API 调用次数
   const MAX_ARTICLES_PER_API_CALL = 3;
@@ -212,9 +221,9 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // 更新聚合索引
+  // 更新聚合索引（写当前批次的分片，避免 3 批并发写同一文件）
   if (totalProcessed > 0 && !dryRun) {
-    await saveRecentIndex(allTranslatedItems);
+    await saveRecentIndex(allTranslatedItems, batch);
   }
 
   console.log(`Batch ${batch} completed${dryRun ? ' [DRY RUN]' : ''}. Processed: ${totalProcessed} items with ${apiCalls} API call(s)`);
