@@ -2,8 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getEnabledFeeds, FeedConfig } from '@/config/feeds';
 import { parseFeed, ParsedItem } from '@/lib/rss-parser';
 import { translateBatch, TranslationInput } from '@/lib/translator';
-import { appendItems, getExistingGuids, saveRecentIndex, TranslatedItem } from '@/lib/storage';
+import {
+  appendItems,
+  getExistingStatus,
+  saveRecentIndex,
+  computeRetryState,
+  ItemStatus,
+  TranslatedItem,
+} from '@/lib/storage';
 import { needsFetch, fetchArticleContent } from '@/lib/article-fetcher';
+import { truncateAtParagraph } from '@/lib/utils';
 
 // Vercel Cron需要的配置
 export const maxDuration = 300; // Pro 版最大 300 秒
@@ -13,6 +21,8 @@ export const dynamic = 'force-dynamic';
 const FEEDS_PER_BATCH = 5;
 // 每个 feed 最多翻译的文章数（降到 2 以适配长文 feed 在 300s 内完成）
 const MAX_ITEMS_PER_FEED = 2;
+// 超过此长度的文章在翻译前段落边界截断，避免单调用耗时超过 API_CALL_TIMEOUT_MS
+const MAX_CONTENT_CHARS_FOR_TRANSLATION = 30_000;
 
 interface FeedWithItems {
   config: FeedConfig;
@@ -68,22 +78,35 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // 第一步：并行获取所有 feeds 的新文章（包括未翻译的重试）
+  // 第一步：并行获取所有 feeds 的新文章（包括未翻译且到达重试时间的）
   console.log(`Fetching ${feedsToProcess.length} feeds...`);
   const feedsWithItems: FeedWithItems[] = [];
   const allItemsToTranslate: TranslationInput[] = [];
+  // guid → 历史 status，在保存阶段用来累加 attempts
+  const priorStatus = new Map<string, ItemStatus>();
+  const now = Date.now();
 
   await Promise.all(feedsToProcess.map(async (feedConfig) => {
     try {
       const feed = await parseFeed(feedConfig.url);
-      const guidStatus = await getExistingGuids(feedConfig.id);
+      const statusMap = await getExistingStatus(feedConfig.id);
 
       const newItems = feed.items
         .filter(item => {
-          const status = guidStatus.get(item.guid);
-          return status === undefined || status === false; // 新文章或未翻译
+          const status = statusMap.get(item.guid);
+          if (status === undefined) return true; // 新文章
+          if (status.translated) return false; // 已成功
+          if (status.permanentlyFailed) return false; // 触顶放弃，人工 reset 才会再试
+          if (status.nextRetryAt && now < new Date(status.nextRetryAt).getTime()) return false;
+          return true; // 到达重试时间
         })
         .slice(0, MAX_ITEMS_PER_FEED);
+
+      // 记录每个 item 的上轮 attempts 数，用于失败时 computeRetryState
+      for (const item of newItems) {
+        const prior = statusMap.get(item.guid);
+        if (prior) priorStatus.set(item.guid, prior);
+      }
 
       if (newItems.length > 0) {
         console.log(`Found ${newItems.length} new/untranslated items for ${feedConfig.name}`);
@@ -161,6 +184,22 @@ export async function GET(request: NextRequest) {
   // enrich 失败的 item 本轮不翻译，等下次 cron 重试
   const itemsForTranslation = allItemsToTranslate.filter(i => !enrichFailedIds.has(i.id));
 
+  // 保留截断前的完整原文（给存档用 originalContent），避免后续 truncate 丢失
+  const fullOriginalContentMap = new Map<string, string>();
+  for (const item of itemsForTranslation) fullOriginalContentMap.set(item.id, item.content);
+
+  // 超长文章段落边界截断；避免单次 MiniMax 调用 >100s 被 abort
+  let truncatedCount = 0;
+  for (const item of itemsForTranslation) {
+    if (item.content.length > MAX_CONTENT_CHARS_FOR_TRANSLATION) {
+      const before = item.content.length;
+      item.content = truncateAtParagraph(item.content, MAX_CONTENT_CHARS_FOR_TRANSLATION);
+      console.log(`Truncated ${item.id}: ${before} → ${item.content.length} chars`);
+      truncatedCount++;
+    }
+  }
+  if (truncatedCount > 0) console.log(`Truncated ${truncatedCount} long article(s)`);
+
   // 第二步：批量翻译所有文章（自动分批避免超出上下文限制）
   console.log(`Translating ${itemsForTranslation.length} articles (${enrichFailedIds.size} deferred)...`);
   const translations = await translateBatch(itemsForTranslation, deadline);
@@ -179,19 +218,33 @@ export async function GET(request: NextRequest) {
 
     for (const item of feedData.items) {
       const translation = translations.get(item.guid);
+      const succeeded = !!translation;
+
+      // 失败路径：累加 attempts 并算下一次重试时间；成功则清空这些字段
+      let retryFields: Pick<TranslatedItem, 'attempts' | 'nextRetryAt' | 'permanentlyFailed'> = {};
+      if (!succeeded) {
+        const prior = priorStatus.get(item.guid)?.attempts ?? 0;
+        const next = computeRetryState(prior);
+        retryFields = {
+          attempts: next.attempts,
+          nextRetryAt: next.nextRetryAt,
+          permanentlyFailed: next.permanentlyFailed || undefined,
+        };
+      }
 
       const translatedItem: TranslatedItem = {
         guid: item.guid,
         originalTitle: item.title,
         translatedTitle: translation?.translatedTitle || item.title,
-        originalContent: enrichedContentMap.get(item.guid) || item.content,
+        originalContent: fullOriginalContentMap.get(item.guid) || enrichedContentMap.get(item.guid) || item.content,
         translatedContent: translation?.translatedContent || (enrichedContentMap.get(item.guid) || item.content),
         link: item.link,
         pubDate: item.pubDate,
         author: item.author,
         categories: item.categories,
         translatedAt: new Date().toISOString(),
-        translated: !!translation,
+        translated: succeeded,
+        ...retryFields,
         sourceFeedId: feedData.config.id,
         sourceFeedName: feedData.config.name,
       };
