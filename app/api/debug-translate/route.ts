@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { parseFeed } from '@/lib/rss-parser';
+import { needsFetch, fetchArticleContent } from '@/lib/article-fetcher';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -35,12 +36,27 @@ export async function GET(request: NextRequest) {
   // 用真实 feed 的前 N 条（与 cron 完全一致），定位 batch 失败的真实原因
   const feedUrl = request.nextUrl.searchParams.get('feed') || 'https://krebsonsecurity.com/feed/';
   const n = Math.min(parseInt(request.nextUrl.searchParams.get('n') || '3', 10), 5);
-  let items: { title: string; content: string }[];
+  const enrich = request.nextUrl.searchParams.get('enrich') !== '0';
+  let items: { title: string; content: string; link?: string }[];
   try {
     const feed = await parseFeed(feedUrl);
-    items = feed.items.slice(0, n).map(i => ({ title: i.title, content: i.content }));
+    items = feed.items.slice(0, n).map(i => ({ title: i.title, content: i.content, link: i.link }));
   } catch (e) {
     return NextResponse.json({ ok: false, meta, fetchError: (e as Error).message });
+  }
+  // 模拟 cron：对短文抓全文
+  const enrichInfo: { id: number; before: number; after: number; fetched: boolean }[] = [];
+  if (enrich) {
+    for (let idx = 0; idx < items.length; idx++) {
+      const it = items[idx];
+      const before = it.content.length;
+      let fetched = false;
+      if (needsFetch(it.content) && it.link) {
+        const full = await fetchArticleContent(it.link);
+        if (full) { it.content = full; fetched = true; }
+      }
+      enrichInfo.push({ id: idx + 1, before, after: it.content.length, fetched });
+    }
   }
   const inputCharsList = items.map(i => i.title.length + i.content.length);
   const articlesText = items.map((it, i) => `---文章${i + 1}---\n标题: ${it.title}\n内容: ${it.content}`).join('\n\n');
@@ -74,14 +90,14 @@ export async function GET(request: NextRequest) {
       meta,
       feedUrl,
       itemCount: items.length,
+      enrichInfo,
       inputCharsList,
       stopReason: msg.stop_reason,
       usage: msg.usage,
       elapsedMs,
       textLen: text.length,
       tagsFound,
-      tail: text.slice(-300),
-      head: text.slice(0, 300),
+      tail: text.slice(-400),
     });
   } catch (e) {
     const err = e as { status?: number; message?: string; error?: unknown };
