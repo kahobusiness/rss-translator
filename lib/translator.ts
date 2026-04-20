@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { getCachedChunk, setCachedChunk, hashChunkContent } from '@/lib/chunk-cache';
 
 // MiniMax Anthropic 兼容 API 配置
 const API_BASE_URL = process.env.API_BASE_URL || process.env.ANTHROPIC_BASE_URL || 'https://api.minimaxi.com/anthropic';
@@ -42,6 +43,7 @@ interface Chunk extends TranslationInput {
   originalId: string;
   chunkIndex: number;
   chunkTotal: number;
+  contentHash: string; // 用于 chunk-cache 的 key 之一
 }
 
 // 粗略 token 估算：ASCII 约 3 字符/token，非 ASCII（CJK 等）约 1 字符/1.2 token
@@ -281,7 +283,13 @@ export async function translateBatch(
   for (const item of items) {
     const tokens = estimateTokens(item.content);
     if (tokens <= SINGLE_CHUNK_LIMIT) {
-      chunks.push({ ...item, originalId: item.id, chunkIndex: 0, chunkTotal: 1 });
+      chunks.push({
+        ...item,
+        originalId: item.id,
+        chunkIndex: 0,
+        chunkTotal: 1,
+        contentHash: hashChunkContent(item.content),
+      });
       continue;
     }
     const parts = splitArticle(item.content, SINGLE_CHUNK_LIMIT);
@@ -295,18 +303,40 @@ export async function translateBatch(
         title: idx === 0 ? item.title : `[PART ${idx + 1}/${parts.length}]`,
         content: part,
         link: item.link,
+        contentHash: hashChunkContent(part),
       });
     });
   }
 
-  // 2. 动态打包
-  const batches = packBatches(chunks, INPUT_BUDGET_PER_CALL);
+  // 2. chunk-cache 预查：同 (guid, chunkIndex, contentHash) 已有成功结果就直接复用
+  const chunkResults = new Map<string, TranslationResult>();
+  const chunksToTranslate: Chunk[] = [];
+  const cacheLookups = await Promise.all(
+    chunks.map(async (c) => ({
+      chunk: c,
+      hit: await getCachedChunk(c.originalId, c.chunkIndex, c.contentHash),
+    })),
+  );
+  for (const { chunk, hit } of cacheLookups) {
+    if (hit) {
+      chunkResults.set(chunk.id, {
+        translatedTitle: hit.translatedTitle,
+        translatedContent: hit.translatedContent,
+      });
+    } else {
+      chunksToTranslate.push(chunk);
+    }
+  }
+  const cacheHits = chunks.length - chunksToTranslate.length;
+  if (cacheHits > 0) console.log(`chunk-cache hit ${cacheHits}/${chunks.length}`);
+
+  // 3. 动态打包未命中的 chunks
+  const batches = packBatches(chunksToTranslate, INPUT_BUDGET_PER_CALL);
   console.log(
-    `Translating ${items.length} article(s), ${chunks.length} chunk(s) → ${batches.length} batch(es), concurrency=${CONCURRENCY}`,
+    `Translating ${items.length} article(s), ${chunksToTranslate.length} chunk(s) → ${batches.length} batch(es), concurrency=${CONCURRENCY}`,
   );
 
-  // 3. 并发执行各批次；deadline 到时统一 abort 在飞调用
-  const chunkResults = new Map<string, TranslationResult>();
+  // 4. 并发执行各批次；deadline 到时统一 abort 在飞调用
   const tasks = batches.map((batch, i) => ({ batch, batchId: i }));
   const deadlineCtrl = new AbortController();
   const deadlineTimer = deadline
@@ -323,12 +353,23 @@ export async function translateBatch(
       }
       const results = await translateSingleBatch(batch, batchId, deadlineCtrl.signal);
       results.forEach((r, id) => chunkResults.set(id, r));
+      // 成功的 chunk 写回缓存；后续 cron 里同样内容不再发调用
+      const writes: Promise<void>[] = [];
+      for (const chunk of batch) {
+        const r = results.get(chunk.id);
+        if (r) {
+          writes.push(
+            setCachedChunk(chunk.originalId, chunk.chunkIndex, chunk.contentHash, r),
+          );
+        }
+      }
+      await Promise.all(writes);
     });
   } finally {
     if (deadlineTimer) clearTimeout(deadlineTimer);
   }
 
-  // 4. 按原文章 id 合并 chunks
+  // 5. 按原文章 id 合并 chunks（含 cache hit 的部分）
   const final = new Map<string, TranslationResult>();
   for (const item of items) {
     const itemChunks = chunks
