@@ -17,7 +17,8 @@ const MODEL_NAME = process.env.MODEL_NAME || 'MiniMax-M2.7';
 const INPUT_BUDGET_PER_CALL = 140_000;
 const SINGLE_CHUNK_LIMIT = 50_000;
 const OUTPUT_MAX = 50_000;
-const CONCURRENCY = 5;
+// 并发 10 → 单批 10 篇文章一轮跑完（2 × 100s 两轮容易撞 cron deadline）
+const CONCURRENCY = 10;
 // MiniMax-M2.7 实测吞吐 ~30 tok/s；单文章 5K 字符约 30s，3 文章合批要 90s+ 触发 abort。
 // 改为单文章一批，让 CONCURRENCY 承担并行度；超时设 100s 防止单调用拖死整个 cron 函数。
 const MAX_ITEMS_PER_BATCH = 1;

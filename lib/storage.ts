@@ -14,9 +14,39 @@ export interface TranslatedItem {
   categories?: string[];
   translatedAt: string;
   translated: boolean;
+  // 失败重试控制（PR-B）：translated=false 且未 permanentlyFailed 时才会被下一次 cron 拉起
+  attempts?: number;           // 已经尝试过的次数；成功置 0/omit
+  nextRetryAt?: string;        // ISO；未到该时间不重试
+  permanentlyFailed?: boolean; // 达到上限后置 true，人工 reset 才会再试
   // 来源feed信息，用于聚合输出时区分
   sourceFeedId?: string;
   sourceFeedName?: string;
+}
+
+export interface ItemStatus {
+  translated: boolean;
+  permanentlyFailed: boolean;
+  nextRetryAt?: string;
+  attempts: number;
+}
+
+// 指数 backoff 时间表：第 N 次失败后 attempts=N，下次重试间隔
+// attempts=1:6h, 2:24h, 3:72h, 4:168h。第 5 次失败置 permanentlyFailed
+const BACKOFF_HOURS = [6, 24, 72, 168];
+export const MAX_RETRY_ATTEMPTS = BACKOFF_HOURS.length + 1;
+
+export function computeRetryState(prevAttempts: number): {
+  attempts: number;
+  nextRetryAt?: string;
+  permanentlyFailed: boolean;
+} {
+  const attempts = prevAttempts + 1;
+  if (attempts >= MAX_RETRY_ATTEMPTS) {
+    return { attempts, permanentlyFailed: true };
+  }
+  const hours = BACKOFF_HOURS[attempts - 1];
+  const nextRetryAt = new Date(Date.now() + hours * 3600_000).toISOString();
+  return { attempts, nextRetryAt, permanentlyFailed: false };
 }
 
 export interface StoredFeed {
@@ -215,10 +245,20 @@ export async function loadAllFeeds(): Promise<StoredFeed[]> {
   return fsLoadAllFeeds();
 }
 
-export async function getExistingGuids(feedId: string): Promise<Map<string, boolean>> {
+export async function getExistingStatus(feedId: string): Promise<Map<string, ItemStatus>> {
   const feed = await loadFeed(feedId);
   if (!feed) return new Map();
-  return new Map(feed.items.map(item => [item.guid, item.translated ?? true]));
+  return new Map(
+    feed.items.map(item => [
+      item.guid,
+      {
+        translated: item.translated ?? true,
+        permanentlyFailed: item.permanentlyFailed ?? false,
+        nextRetryAt: item.nextRetryAt,
+        attempts: item.attempts ?? 0,
+      },
+    ])
+  );
 }
 
 export async function appendItems(
