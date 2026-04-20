@@ -18,7 +18,10 @@ const INPUT_BUDGET_PER_CALL = 140_000;
 const SINGLE_CHUNK_LIMIT = 50_000;
 const OUTPUT_MAX = 50_000;
 const CONCURRENCY = 5;
-const API_CALL_TIMEOUT_MS = 90_000;
+// MiniMax-M2.7 实测吞吐 ~30 tok/s；单文章 5K 字符约 30s，3 文章合批要 90s+ 触发 abort。
+// 改为单文章一批，让 CONCURRENCY 承担并行度；超时拉到 180s 作为单文章的安全边界。
+const MAX_ITEMS_PER_BATCH = 1;
+const API_CALL_TIMEOUT_MS = 180_000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [500, 1500, 4000];
 
@@ -113,14 +116,16 @@ function splitArticle(content: string, maxTokens: number): string[] {
   return result;
 }
 
-// 按 token 预算贪心打包
+// 按 token 预算贪心打包；同时受 MAX_ITEMS_PER_BATCH 上限约束，避免单次调用挂得太久
 function packBatches(chunks: Chunk[], budget: number): Chunk[][] {
   const batches: Chunk[][] = [];
   let current: Chunk[] = [];
   let currentTokens = 0;
   for (const c of chunks) {
     const t = estimateTokens(c.title) + estimateTokens(c.content);
-    if (current.length > 0 && currentTokens + t > budget) {
+    const overBudget = currentTokens + t > budget;
+    const overItemCap = current.length >= MAX_ITEMS_PER_BATCH;
+    if (current.length > 0 && (overBudget || overItemCap)) {
       batches.push(current);
       current = [];
       currentTokens = 0;
