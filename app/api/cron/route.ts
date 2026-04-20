@@ -21,8 +21,9 @@ export const dynamic = 'force-dynamic';
 const FEEDS_PER_BATCH = 5;
 // 每个 feed 最多翻译的文章数（降到 2 以适配长文 feed 在 300s 内完成）
 const MAX_ITEMS_PER_FEED = 2;
-// 超过此长度的文章在翻译前段落边界截断，避免单调用耗时超过 API_CALL_TIMEOUT_MS
-const MAX_CONTENT_CHARS_FOR_TRANSLATION = 30_000;
+// 超过此长度的文章在翻译前段落边界截断
+// 经 dev preview 实测：>15K 字符常常导致 100s per-call 超时被 abort；15K 是稳定区间上界
+const MAX_CONTENT_CHARS_FOR_TRANSLATION = 15_000;
 
 interface FeedWithItems {
   config: FeedConfig;
