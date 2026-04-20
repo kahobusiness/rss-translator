@@ -1,10 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { getCachedChunk, setCachedChunk, hashChunkContent } from '@/lib/chunk-cache';
 
 // MiniMax Anthropic 兼容 API 配置
 const API_BASE_URL = process.env.API_BASE_URL || process.env.ANTHROPIC_BASE_URL || 'https://api.minimaxi.com/anthropic';
+const API_KEY = process.env.API_KEY || process.env.ANTHROPIC_API_KEY;
 
+// 官方 Anthropic 用 x-api-key（apiKey），第三方兼容端点（MiniMax/Zenmux 等）用 Authorization: Bearer（authToken）
+const isOfficialAnthropic = /(^|\.)anthropic\.com$/i.test(new URL(API_BASE_URL).hostname);
 const anthropic = new Anthropic({
-  apiKey: process.env.API_KEY || process.env.ANTHROPIC_API_KEY,
+  ...(isOfficialAnthropic ? { apiKey: API_KEY } : { authToken: API_KEY }),
   baseURL: API_BASE_URL,
 });
 
@@ -14,8 +18,12 @@ const MODEL_NAME = process.env.MODEL_NAME || 'MiniMax-M2.7';
 const INPUT_BUDGET_PER_CALL = 140_000;
 const SINGLE_CHUNK_LIMIT = 50_000;
 const OUTPUT_MAX = 50_000;
-const CONCURRENCY = 5;
-const API_CALL_TIMEOUT_MS = 90_000;
+// 并发 10 → 单批 10 篇文章一轮跑完（2 × 100s 两轮容易撞 cron deadline）
+const CONCURRENCY = 10;
+// MiniMax-M2.7 实测吞吐 ~30 tok/s；单文章 5K 字符约 30s，3 文章合批要 90s+ 触发 abort。
+// 改为单文章一批，让 CONCURRENCY 承担并行度；超时设 100s 防止单调用拖死整个 cron 函数。
+const MAX_ITEMS_PER_BATCH = 1;
+const API_CALL_TIMEOUT_MS = 100_000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [500, 1500, 4000];
 
@@ -35,6 +43,7 @@ interface Chunk extends TranslationInput {
   originalId: string;
   chunkIndex: number;
   chunkTotal: number;
+  contentHash: string; // 用于 chunk-cache 的 key 之一
 }
 
 // 粗略 token 估算：ASCII 约 3 字符/token，非 ASCII（CJK 等）约 1 字符/1.2 token
@@ -110,14 +119,16 @@ function splitArticle(content: string, maxTokens: number): string[] {
   return result;
 }
 
-// 按 token 预算贪心打包
+// 按 token 预算贪心打包；同时受 MAX_ITEMS_PER_BATCH 上限约束，避免单次调用挂得太久
 function packBatches(chunks: Chunk[], budget: number): Chunk[][] {
   const batches: Chunk[][] = [];
   let current: Chunk[] = [];
   let currentTokens = 0;
   for (const c of chunks) {
     const t = estimateTokens(c.title) + estimateTokens(c.content);
-    if (current.length > 0 && currentTokens + t > budget) {
+    const overBudget = currentTokens + t > budget;
+    const overItemCap = current.length >= MAX_ITEMS_PER_BATCH;
+    if (current.length > 0 && (overBudget || overItemCap)) {
       batches.push(current);
       current = [];
       currentTokens = 0;
@@ -202,6 +213,7 @@ const SYSTEM_PROMPT = `你是一位专业的英中翻译。请遵循以下规则
 async function translateSingleBatch(
   batch: Chunk[],
   batchId: number,
+  externalSignal?: AbortSignal,
 ): Promise<Map<string, TranslationResult>> {
   if (batch.length === 0) return new Map();
 
@@ -231,6 +243,9 @@ ${formatExample}`;
     const message = await withRetry(async () => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), API_CALL_TIMEOUT_MS);
+      // cron 总 deadline 到时也立刻 abort 在飞调用，避免函数 invocation timeout
+      const onExternalAbort = () => controller.abort();
+      externalSignal?.addEventListener('abort', onExternalAbort);
       try {
         return await anthropic.messages.create(
           {
@@ -243,6 +258,7 @@ ${formatExample}`;
         );
       } finally {
         clearTimeout(timer);
+        externalSignal?.removeEventListener('abort', onExternalAbort);
       }
     }, label);
 
@@ -267,7 +283,13 @@ export async function translateBatch(
   for (const item of items) {
     const tokens = estimateTokens(item.content);
     if (tokens <= SINGLE_CHUNK_LIMIT) {
-      chunks.push({ ...item, originalId: item.id, chunkIndex: 0, chunkTotal: 1 });
+      chunks.push({
+        ...item,
+        originalId: item.id,
+        chunkIndex: 0,
+        chunkTotal: 1,
+        contentHash: hashChunkContent(item.content),
+      });
       continue;
     }
     const parts = splitArticle(item.content, SINGLE_CHUNK_LIMIT);
@@ -281,29 +303,73 @@ export async function translateBatch(
         title: idx === 0 ? item.title : `[PART ${idx + 1}/${parts.length}]`,
         content: part,
         link: item.link,
+        contentHash: hashChunkContent(part),
       });
     });
   }
 
-  // 2. 动态打包
-  const batches = packBatches(chunks, INPUT_BUDGET_PER_CALL);
+  // 2. chunk-cache 预查：同 (guid, chunkIndex, contentHash) 已有成功结果就直接复用
+  const chunkResults = new Map<string, TranslationResult>();
+  const chunksToTranslate: Chunk[] = [];
+  const cacheLookups = await Promise.all(
+    chunks.map(async (c) => ({
+      chunk: c,
+      hit: await getCachedChunk(c.originalId, c.chunkIndex, c.contentHash),
+    })),
+  );
+  for (const { chunk, hit } of cacheLookups) {
+    if (hit) {
+      chunkResults.set(chunk.id, {
+        translatedTitle: hit.translatedTitle,
+        translatedContent: hit.translatedContent,
+      });
+    } else {
+      chunksToTranslate.push(chunk);
+    }
+  }
+  const cacheHits = chunks.length - chunksToTranslate.length;
+  if (cacheHits > 0) console.log(`chunk-cache hit ${cacheHits}/${chunks.length}`);
+
+  // 3. 动态打包未命中的 chunks
+  const batches = packBatches(chunksToTranslate, INPUT_BUDGET_PER_CALL);
   console.log(
-    `Translating ${items.length} article(s), ${chunks.length} chunk(s) → ${batches.length} batch(es), concurrency=${CONCURRENCY}`,
+    `Translating ${items.length} article(s), ${chunksToTranslate.length} chunk(s) → ${batches.length} batch(es), concurrency=${CONCURRENCY}`,
   );
 
-  // 3. 并发执行各批次
-  const chunkResults = new Map<string, TranslationResult>();
+  // 4. 并发执行各批次；deadline 到时统一 abort 在飞调用
   const tasks = batches.map((batch, i) => ({ batch, batchId: i }));
-  await runWithConcurrency(tasks, CONCURRENCY, async ({ batch, batchId }) => {
-    if (deadline && Date.now() > deadline) {
-      console.warn(`[batch ${batchId}] deadline reached, skipping`);
-      return;
-    }
-    const results = await translateSingleBatch(batch, batchId);
-    results.forEach((r, id) => chunkResults.set(id, r));
-  });
+  const deadlineCtrl = new AbortController();
+  const deadlineTimer = deadline
+    ? setTimeout(() => {
+        console.warn('translateBatch deadline reached, aborting in-flight calls');
+        deadlineCtrl.abort();
+      }, Math.max(0, deadline - Date.now()))
+    : null;
+  try {
+    await runWithConcurrency(tasks, CONCURRENCY, async ({ batch, batchId }) => {
+      if (deadline && Date.now() > deadline) {
+        console.warn(`[batch ${batchId}] deadline reached, skipping`);
+        return;
+      }
+      const results = await translateSingleBatch(batch, batchId, deadlineCtrl.signal);
+      results.forEach((r, id) => chunkResults.set(id, r));
+      // 成功的 chunk 写回缓存；后续 cron 里同样内容不再发调用
+      const writes: Promise<void>[] = [];
+      for (const chunk of batch) {
+        const r = results.get(chunk.id);
+        if (r) {
+          writes.push(
+            setCachedChunk(chunk.originalId, chunk.chunkIndex, chunk.contentHash, r),
+          );
+        }
+      }
+      await Promise.all(writes);
+    });
+  } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
+  }
 
-  // 4. 按原文章 id 合并 chunks
+  // 5. 按原文章 id 合并 chunks（含 cache hit 的部分）
   const final = new Map<string, TranslationResult>();
   for (const item of items) {
     const itemChunks = chunks

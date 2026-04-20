@@ -2,8 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getEnabledFeeds, FeedConfig } from '@/config/feeds';
 import { parseFeed, ParsedItem } from '@/lib/rss-parser';
 import { translateBatch, TranslationInput } from '@/lib/translator';
-import { appendItems, getExistingGuids, saveRecentIndex, TranslatedItem } from '@/lib/storage';
+import {
+  appendItems,
+  getExistingStatus,
+  saveRecentIndex,
+  computeRetryState,
+  ItemStatus,
+  TranslatedItem,
+} from '@/lib/storage';
 import { needsFetch, fetchArticleContent } from '@/lib/article-fetcher';
+import { truncateAtParagraph } from '@/lib/utils';
 
 // Vercel Cron需要的配置
 export const maxDuration = 300; // Pro 版最大 300 秒
@@ -11,8 +19,11 @@ export const dynamic = 'force-dynamic';
 
 // 每批处理的 feed 数量（减少到 5 以确保在 300s 内完成）
 const FEEDS_PER_BATCH = 5;
-// 每个 feed 最多翻译的文章数
-const MAX_ITEMS_PER_FEED = 3;
+// 每个 feed 最多翻译的文章数（降到 2 以适配长文 feed 在 300s 内完成）
+const MAX_ITEMS_PER_FEED = 2;
+// 超过此长度的文章在翻译前段落边界截断
+// 经 dev preview 实测：>15K 字符常常导致 100s per-call 超时被 abort；15K 是稳定区间上界
+const MAX_CONTENT_CHARS_FOR_TRANSLATION = 15_000;
 
 interface FeedWithItems {
   config: FeedConfig;
@@ -35,10 +46,12 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const batchParam = searchParams.get('batch');
   const batch = batchParam !== null ? parseInt(batchParam, 10) : 0;
+  // dryRun=1 时只跑翻译流程，不写 Blob，结果直接回包，便于在 preview 验证
+  const dryRun = searchParams.get('dryRun') === '1';
 
   const startTime = Date.now();
-  // 250s deadline（300s 限制 - 50s 缓冲用于 RSS 抓取和保存）
-  const deadline = startTime + 250 * 1000;
+  // 220s deadline（300s 限制 - 80s 缓冲：RSS 抓取 + 在飞 abort 收尾 + 保存）
+  const deadline = startTime + 220 * 1000;
 
   console.log(`Starting cron job, batch ${batch}...`);
 
@@ -66,22 +79,35 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // 第一步：并行获取所有 feeds 的新文章（包括未翻译的重试）
+  // 第一步：并行获取所有 feeds 的新文章（包括未翻译且到达重试时间的）
   console.log(`Fetching ${feedsToProcess.length} feeds...`);
   const feedsWithItems: FeedWithItems[] = [];
   const allItemsToTranslate: TranslationInput[] = [];
+  // guid → 历史 status，在保存阶段用来累加 attempts
+  const priorStatus = new Map<string, ItemStatus>();
+  const now = Date.now();
 
   await Promise.all(feedsToProcess.map(async (feedConfig) => {
     try {
       const feed = await parseFeed(feedConfig.url);
-      const guidStatus = await getExistingGuids(feedConfig.id);
+      const statusMap = await getExistingStatus(feedConfig.id);
 
       const newItems = feed.items
         .filter(item => {
-          const status = guidStatus.get(item.guid);
-          return status === undefined || status === false; // 新文章或未翻译
+          const status = statusMap.get(item.guid);
+          if (status === undefined) return true; // 新文章
+          if (status.translated) return false; // 已成功
+          if (status.permanentlyFailed) return false; // 触顶放弃，人工 reset 才会再试
+          if (status.nextRetryAt && now < new Date(status.nextRetryAt).getTime()) return false;
+          return true; // 到达重试时间
         })
         .slice(0, MAX_ITEMS_PER_FEED);
+
+      // 记录每个 item 的上轮 attempts 数，用于失败时 computeRetryState
+      for (const item of newItems) {
+        const prior = statusMap.get(item.guid);
+        if (prior) priorStatus.set(item.guid, prior);
+      }
 
       if (newItems.length > 0) {
         console.log(`Found ${newItems.length} new/untranslated items for ${feedConfig.name}`);
@@ -126,6 +152,7 @@ export async function GET(request: NextRequest) {
 
   // 第 1.5 步：对内容不足的文章抓取原文网页（整体 15s 超时，使用 AbortController）
   const enrichedContentMap = new Map<string, string>();
+  const enrichFailedIds = new Set<string>();
   const itemsNeedingFetch = allItemsToTranslate.filter(item => needsFetch(item.content));
   if (itemsNeedingFetch.length > 0) {
     console.log(`Fetching full content for ${itemsNeedingFetch.length} articles...`);
@@ -134,11 +161,14 @@ export async function GET(request: NextRequest) {
     try {
       await Promise.all(
         itemsNeedingFetch.map(async (item) => {
-          if (fetchController.signal.aborted || !item.link) return;
-          const fullContent = await fetchArticleContent(item.link);
-          if (fullContent) {
-            item.content = fullContent;
-            enrichedContentMap.set(item.id, fullContent);
+          if (fetchController.signal.aborted) return;
+          const result = await fetchArticleContent(item.link || '');
+          if (result.content) {
+            item.content = result.content;
+            enrichedContentMap.set(item.id, result.content);
+          } else if (result.attempted) {
+            // 真正抓取失败：跳过本轮，不用 snippet 强翻以致永久低质量
+            enrichFailedIds.add(item.id);
           }
         })
       );
@@ -147,12 +177,33 @@ export async function GET(request: NextRequest) {
     } finally {
       clearTimeout(fetchTimeout);
     }
-    console.log(`Article fetch done. Enriched ${enrichedContentMap.size}/${itemsNeedingFetch.length} articles.`);
+    console.log(
+      `Article fetch done. Enriched ${enrichedContentMap.size}/${itemsNeedingFetch.length}, skipped ${enrichFailedIds.size}.`
+    );
   }
 
+  // enrich 失败的 item 本轮不翻译，等下次 cron 重试
+  const itemsForTranslation = allItemsToTranslate.filter(i => !enrichFailedIds.has(i.id));
+
+  // 保留截断前的完整原文（给存档用 originalContent），避免后续 truncate 丢失
+  const fullOriginalContentMap = new Map<string, string>();
+  for (const item of itemsForTranslation) fullOriginalContentMap.set(item.id, item.content);
+
+  // 超长文章段落边界截断；避免单次 MiniMax 调用 >100s 被 abort
+  let truncatedCount = 0;
+  for (const item of itemsForTranslation) {
+    if (item.content.length > MAX_CONTENT_CHARS_FOR_TRANSLATION) {
+      const before = item.content.length;
+      item.content = truncateAtParagraph(item.content, MAX_CONTENT_CHARS_FOR_TRANSLATION);
+      console.log(`Truncated ${item.id}: ${before} → ${item.content.length} chars`);
+      truncatedCount++;
+    }
+  }
+  if (truncatedCount > 0) console.log(`Truncated ${truncatedCount} long article(s)`);
+
   // 第二步：批量翻译所有文章（自动分批避免超出上下文限制）
-  console.log(`Translating ${allItemsToTranslate.length} articles...`);
-  const translations = await translateBatch(allItemsToTranslate, deadline);
+  console.log(`Translating ${itemsForTranslation.length} articles (${enrichFailedIds.size} deferred)...`);
+  const translations = await translateBatch(itemsForTranslation, deadline);
 
   // 计算实际 API 调用次数
   const MAX_ARTICLES_PER_API_CALL = 3;
@@ -168,19 +219,33 @@ export async function GET(request: NextRequest) {
 
     for (const item of feedData.items) {
       const translation = translations.get(item.guid);
+      const succeeded = !!translation;
+
+      // 失败路径：累加 attempts 并算下一次重试时间；成功则清空这些字段
+      let retryFields: Pick<TranslatedItem, 'attempts' | 'nextRetryAt' | 'permanentlyFailed'> = {};
+      if (!succeeded) {
+        const prior = priorStatus.get(item.guid)?.attempts ?? 0;
+        const next = computeRetryState(prior);
+        retryFields = {
+          attempts: next.attempts,
+          nextRetryAt: next.nextRetryAt,
+          permanentlyFailed: next.permanentlyFailed || undefined,
+        };
+      }
 
       const translatedItem: TranslatedItem = {
         guid: item.guid,
         originalTitle: item.title,
         translatedTitle: translation?.translatedTitle || item.title,
-        originalContent: enrichedContentMap.get(item.guid) || item.content,
+        originalContent: fullOriginalContentMap.get(item.guid) || enrichedContentMap.get(item.guid) || item.content,
         translatedContent: translation?.translatedContent || (enrichedContentMap.get(item.guid) || item.content),
         link: item.link,
         pubDate: item.pubDate,
         author: item.author,
         categories: item.categories,
         translatedAt: new Date().toISOString(),
-        translated: !!translation,
+        translated: succeeded,
+        ...retryFields,
         sourceFeedId: feedData.config.id,
         sourceFeedName: feedData.config.name,
       };
@@ -189,13 +254,15 @@ export async function GET(request: NextRequest) {
     }
 
     if (translatedItems.length > 0) {
-      await appendItems(
-        feedData.config.id,
-        feedData.feedTitle,
-        feedData.feedDescription,
-        feedData.feedLink,
-        translatedItems
-      );
+      if (!dryRun) {
+        await appendItems(
+          feedData.config.id,
+          feedData.feedTitle,
+          feedData.feedDescription,
+          feedData.feedLink,
+          translatedItems
+        );
+      }
       totalProcessed += translatedItems.length;
       allTranslatedItems.push(...translatedItems);
     }
@@ -208,17 +275,29 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // 更新聚合索引
-  if (totalProcessed > 0) {
-    await saveRecentIndex(allTranslatedItems);
+  // 更新聚合索引（写当前批次的分片，避免 3 批并发写同一文件）
+  if (totalProcessed > 0 && !dryRun) {
+    await saveRecentIndex(allTranslatedItems, batch);
   }
 
-  console.log(`Batch ${batch} completed. Processed: ${totalProcessed} items with ${apiCalls} API call(s)`);
+  console.log(`Batch ${batch} completed${dryRun ? ' [DRY RUN]' : ''}. Processed: ${totalProcessed} items with ${apiCalls} API call(s)`);
 
   const nextBatch = batch + 1 < totalBatches ? batch + 1 : null;
 
+  // dry-run 时回传翻译样本，用于人眼验证是否翻成了中文
+  const samples = dryRun
+    ? allTranslatedItems.slice(0, 5).map(i => ({
+        feedId: i.sourceFeedId,
+        translated: i.translated,
+        originalTitle: i.originalTitle,
+        translatedTitle: i.translatedTitle,
+        translatedContentSnippet: i.translatedContent.slice(0, 240),
+      }))
+    : undefined;
+
   return NextResponse.json({
     success: true,
+    dryRun,
     timestamp: new Date().toISOString(),
     batch,
     totalBatches,
@@ -229,6 +308,7 @@ export async function GET(request: NextRequest) {
     totalItems: totalProcessed,
     apiCalls,
     results,
+    samples,
     nextBatchUrl: nextBatch !== null ? `/api/cron?batch=${nextBatch}` : null,
     warning,
   });
