@@ -284,28 +284,15 @@ export async function GET(request: NextRequest) {
 
   const nextBatch = batch + 1 < totalBatches ? batch + 1 : null;
 
-  // dry-run 时回传翻译样本 + 诊断信息，用于人眼验证和排查
+  // dry-run 时回传翻译样本，用于人眼验证是否翻成了中文
   const samples = dryRun
-    ? allTranslatedItems.slice(0, 10).map(i => ({
+    ? allTranslatedItems.slice(0, 5).map(i => ({
         feedId: i.sourceFeedId,
         translated: i.translated,
-        attempts: i.attempts,
-        permanentlyFailed: i.permanentlyFailed,
-        originalChars: i.originalContent.length,
-        translatedChars: i.translatedContent.length,
-        // originalContent 是截断前的完整版；>30K 说明本轮翻译用了截断版
-        hitTruncation: i.originalContent.length > MAX_CONTENT_CHARS_FOR_TRANSLATION,
         originalTitle: i.originalTitle,
         translatedTitle: i.translatedTitle,
         translatedContentSnippet: i.translatedContent.slice(0, 240),
       }))
-    : undefined;
-  const diagnostics = dryRun
-    ? {
-        truncatedCount,
-        deferredByEnrichFailure: enrichFailedIds.size,
-        enrichedCount: enrichedContentMap.size,
-      }
     : undefined;
 
   return NextResponse.json({
@@ -322,7 +309,6 @@ export async function GET(request: NextRequest) {
     apiCalls,
     results,
     samples,
-    diagnostics,
     nextBatchUrl: nextBatch !== null ? `/api/cron?batch=${nextBatch}` : null,
     warning,
   });
