@@ -11,8 +11,8 @@ export const dynamic = 'force-dynamic';
 
 // 每批处理的 feed 数量（减少到 5 以确保在 300s 内完成）
 const FEEDS_PER_BATCH = 5;
-// 每个 feed 最多翻译的文章数
-const MAX_ITEMS_PER_FEED = 3;
+// 每个 feed 最多翻译的文章数（降到 2 以适配长文 feed 在 300s 内完成）
+const MAX_ITEMS_PER_FEED = 2;
 
 interface FeedWithItems {
   config: FeedConfig;
@@ -39,8 +39,8 @@ export async function GET(request: NextRequest) {
   const dryRun = searchParams.get('dryRun') === '1';
 
   const startTime = Date.now();
-  // 250s deadline（300s 限制 - 50s 缓冲用于 RSS 抓取和保存）
-  const deadline = startTime + 250 * 1000;
+  // 220s deadline（300s 限制 - 80s 缓冲：RSS 抓取 + 在飞 abort 收尾 + 保存）
+  const deadline = startTime + 220 * 1000;
 
   console.log(`Starting cron job, batch ${batch}...`);
 

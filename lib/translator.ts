@@ -19,9 +19,9 @@ const SINGLE_CHUNK_LIMIT = 50_000;
 const OUTPUT_MAX = 50_000;
 const CONCURRENCY = 5;
 // MiniMax-M2.7 实测吞吐 ~30 tok/s；单文章 5K 字符约 30s，3 文章合批要 90s+ 触发 abort。
-// 改为单文章一批，让 CONCURRENCY 承担并行度；超时拉到 180s 作为单文章的安全边界。
+// 改为单文章一批，让 CONCURRENCY 承担并行度；超时设 100s 防止单调用拖死整个 cron 函数。
 const MAX_ITEMS_PER_BATCH = 1;
-const API_CALL_TIMEOUT_MS = 180_000;
+const API_CALL_TIMEOUT_MS = 100_000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [500, 1500, 4000];
 
@@ -210,6 +210,7 @@ const SYSTEM_PROMPT = `你是一位专业的英中翻译。请遵循以下规则
 async function translateSingleBatch(
   batch: Chunk[],
   batchId: number,
+  externalSignal?: AbortSignal,
 ): Promise<Map<string, TranslationResult>> {
   if (batch.length === 0) return new Map();
 
@@ -239,6 +240,9 @@ ${formatExample}`;
     const message = await withRetry(async () => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), API_CALL_TIMEOUT_MS);
+      // cron 总 deadline 到时也立刻 abort 在飞调用，避免函数 invocation timeout
+      const onExternalAbort = () => controller.abort();
+      externalSignal?.addEventListener('abort', onExternalAbort);
       try {
         return await anthropic.messages.create(
           {
@@ -251,6 +255,7 @@ ${formatExample}`;
         );
       } finally {
         clearTimeout(timer);
+        externalSignal?.removeEventListener('abort', onExternalAbort);
       }
     }, label);
 
@@ -299,17 +304,28 @@ export async function translateBatch(
     `Translating ${items.length} article(s), ${chunks.length} chunk(s) → ${batches.length} batch(es), concurrency=${CONCURRENCY}`,
   );
 
-  // 3. 并发执行各批次
+  // 3. 并发执行各批次；deadline 到时统一 abort 在飞调用
   const chunkResults = new Map<string, TranslationResult>();
   const tasks = batches.map((batch, i) => ({ batch, batchId: i }));
-  await runWithConcurrency(tasks, CONCURRENCY, async ({ batch, batchId }) => {
-    if (deadline && Date.now() > deadline) {
-      console.warn(`[batch ${batchId}] deadline reached, skipping`);
-      return;
-    }
-    const results = await translateSingleBatch(batch, batchId);
-    results.forEach((r, id) => chunkResults.set(id, r));
-  });
+  const deadlineCtrl = new AbortController();
+  const deadlineTimer = deadline
+    ? setTimeout(() => {
+        console.warn('translateBatch deadline reached, aborting in-flight calls');
+        deadlineCtrl.abort();
+      }, Math.max(0, deadline - Date.now()))
+    : null;
+  try {
+    await runWithConcurrency(tasks, CONCURRENCY, async ({ batch, batchId }) => {
+      if (deadline && Date.now() > deadline) {
+        console.warn(`[batch ${batchId}] deadline reached, skipping`);
+        return;
+      }
+      const results = await translateSingleBatch(batch, batchId, deadlineCtrl.signal);
+      results.forEach((r, id) => chunkResults.set(id, r));
+    });
+  } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
+  }
 
   // 4. 按原文章 id 合并 chunks
   const final = new Map<string, TranslationResult>();
