@@ -2,9 +2,12 @@ import Anthropic from '@anthropic-ai/sdk';
 
 // MiniMax Anthropic 兼容 API 配置
 const API_BASE_URL = process.env.API_BASE_URL || process.env.ANTHROPIC_BASE_URL || 'https://api.minimaxi.com/anthropic';
+const API_KEY = process.env.API_KEY || process.env.ANTHROPIC_API_KEY;
 
+// 官方 Anthropic 用 x-api-key（apiKey），第三方兼容端点（MiniMax/Zenmux 等）用 Authorization: Bearer（authToken）
+const isOfficialAnthropic = /(^|\.)anthropic\.com$/i.test(new URL(API_BASE_URL).hostname);
 const anthropic = new Anthropic({
-  apiKey: process.env.API_KEY || process.env.ANTHROPIC_API_KEY,
+  ...(isOfficialAnthropic ? { apiKey: API_KEY } : { authToken: API_KEY }),
   baseURL: API_BASE_URL,
 });
 
