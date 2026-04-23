@@ -1,114 +1,122 @@
 import { getEnabledFeeds } from '@/config/feeds';
+import { CopyButton } from './components/CopyButton';
+import styles from './page.module.css';
 
 export const revalidate = 3600;
 
-// 信源分类映射
 const FEED_CATEGORIES: Record<string, string[]> = {
-  'AI 与深度思考': [
-    'simonwillison-net', 'dwarkesh-com', 'gwern-net',
-  ],
+  'AI 与深度思考': ['simonwillison-net', 'dwarkesh-com', 'gwern-net'],
   '系统与工程实践': [
-    'antirez-com', 'rachelbythebay-com', 'lucumr-pocoo-org', 'mitchellh-com',
+    'antirez-com',
+    'rachelbythebay-com',
+    'lucumr-pocoo-org',
+    'mitchellh-com',
   ],
   '科技行业与文化': [
-    'daringfireball-net', 'construction-physics-com', 'paulgraham-com',
+    'daringfireball-net',
+    'construction-physics-com',
+    'paulgraham-com',
   ],
-  '安全': [
-    'krebsonsecurity-com', 'troyhunt-com', 'lcamtuf-substack-com',
-  ],
-  '硬件与底层': [
-    'righto-com', 'fabiensanglard-net',
-  ],
+  安全: ['krebsonsecurity-com', 'troyhunt-com', 'lcamtuf-substack-com'],
+  '硬件与底层': ['righto-com', 'fabiensanglard-net'],
 };
+
+const AGGREGATE_PATH = '/api/feed/all';
+
+const API_ROUTES: Array<[string, string]> = [
+  [AGGREGATE_PATH, '聚合所有源的翻译 RSS（推荐订阅）'],
+  ['/api/feed/[id]', '单个源的翻译 RSS'],
+  ['/api/feeds', '可用源列表（JSON）'],
+];
 
 export default async function Home() {
   const feeds = await getEnabledFeeds();
-  const feedMap = new Map(feeds.map(f => [f.id, f]));
+  const feedMap = new Map(feeds.map((f) => [f.id, f]));
 
   return (
-    <main style={{ padding: '2rem', fontFamily: 'system-ui, sans-serif', maxWidth: '900px', margin: '0 auto' }}>
-      <h1 style={{ marginBottom: '0.5rem' }}>RSS Translator</h1>
-      <p style={{ color: '#555', marginTop: 0 }}>
-        精选 {feeds.length} 个英文技术博客，使用 MiniMax-M2.7 自动翻译成中文。每 6 小时更新。
-      </p>
-
-      <div style={{ background: '#e8f5e9', padding: '1rem', borderRadius: '8px', marginBottom: '2rem' }}>
-        <h3 style={{ margin: '0 0 0.5rem 0' }}>订阅地址</h3>
-        <p style={{ margin: 0 }}>
-          <strong>聚合订阅（推荐）：</strong>
-          <code style={{ background: '#fff', padding: '0.25rem 0.5rem', borderRadius: '4px', marginLeft: '0.5rem' }}>
-            /api/feed/all
-          </code>
+    <main className={styles.main}>
+      <header className={styles.header}>
+        <p className={styles.eyebrow}>RSS · 中文翻译</p>
+        <h1 className={styles.title}>精选英文技术博客，译成中文。</h1>
+        <p className={styles.subtitle}>
+          {feeds.length} 个信源，每 6 小时自动更新。由 MiniMax-M2.7 翻译，
+          结果托管在 Vercel Blob。
         </p>
-        <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem', color: '#666' }}>
-          在 Reeder 等 RSS 阅读器中订阅此地址，即可获取所有源的翻译内容。
+      </header>
+
+      <section className={styles.subscribeCard}>
+        <p className={styles.subscribeLabel}>聚合订阅（推荐）</p>
+        <div className={styles.subscribeRow}>
+          <code className={styles.subscribeUrl}>{AGGREGATE_PATH}</code>
+          <CopyButton path={AGGREGATE_PATH} />
+        </div>
+        <p className={styles.subscribeHint}>
+          在 Reeder、NetNewsWire 等阅读器中订阅此地址，即可获取所有源的翻译内容。
         </p>
-      </div>
+      </section>
 
-      <h2>精选信源</h2>
-      <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1.5rem' }}>
-        从 HN Popular Blogs 2025 中精选，覆盖 AI、安全、系统、科技、硬件 5 个领域。
-      </p>
+      <section>
+        <div className={styles.sectionHeader}>
+          <h2 className={styles.sectionTitle}>信源</h2>
+          <p className={styles.sectionDesc}>
+            从 HN Popular Blogs 2025 中精选，覆盖 AI、系统、科技、安全、硬件 5 个领域。
+          </p>
+        </div>
 
-      {Object.entries(FEED_CATEGORIES).map(([category, ids]) => {
-        const categoryFeeds = ids.map(id => feedMap.get(id)).filter(Boolean);
-        if (categoryFeeds.length === 0) return null;
+        {Object.entries(FEED_CATEGORIES).map(([category, ids]) => {
+          const categoryFeeds = ids
+            .map((id) => feedMap.get(id))
+            .filter((f): f is NonNullable<typeof f> => !!f);
+          if (categoryFeeds.length === 0) return null;
 
-        return (
-          <div key={category} style={{ marginBottom: '1.5rem' }}>
-            <h3 style={{ fontSize: '1rem', color: '#333', marginBottom: '0.5rem', borderBottom: '1px solid #eee', paddingBottom: '0.25rem' }}>
-              {category}
-              <span style={{ fontWeight: 'normal', color: '#999', fontSize: '0.85rem', marginLeft: '0.5rem' }}>
-                ({categoryFeeds.length})
-              </span>
-            </h3>
-            <div style={{ display: 'grid', gap: '0.5rem' }}>
-              {categoryFeeds.map(feed => feed && (
-                <div key={feed.id} style={{ padding: '0.5rem 0.75rem', background: '#f9f9f9', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.25rem' }}>
-                  <div>
-                    <strong style={{ fontSize: '0.95rem' }}>{feed.name}</strong>
-                    {feed.htmlUrl && (
-                      <a href={feed.htmlUrl} target="_blank" rel="noopener noreferrer"
-                        style={{ color: '#999', fontSize: '0.8rem', marginLeft: '0.5rem', textDecoration: 'none' }}>
-                        {feed.htmlUrl.replace(/^https?:\/\//, '')}
-                      </a>
-                    )}
+          return (
+            <div key={category} className={styles.category}>
+              <h3 className={styles.categoryTitle}>
+                <span>{category}</span>
+                <span className={styles.categoryCount}>
+                  {categoryFeeds.length}
+                </span>
+              </h3>
+              <div className={styles.feedList}>
+                {categoryFeeds.map((feed) => (
+                  <div key={feed.id} className={styles.feedItem}>
+                    <div className={styles.feedMeta}>
+                      <span className={styles.feedName}>{feed.name}</span>
+                      {feed.htmlUrl && (
+                        <a
+                          href={feed.htmlUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={styles.feedLink}
+                        >
+                          {feed.htmlUrl.replace(/^https?:\/\//, '')}
+                        </a>
+                      )}
+                    </div>
+                    <code className={styles.feedPath}>/api/feed/{feed.id}</code>
                   </div>
-                  <code style={{ background: '#fff', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.8rem', color: '#666' }}>
-                    /api/feed/{feed.id}
-                  </code>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </section>
 
-      <h2>API</h2>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-        <tbody>
-          {[
-            ['/api/feed/all', '聚合所有源的翻译 RSS（推荐订阅）'],
-            ['/api/feed/[id]', '单个源的翻译 RSS'],
-            ['/api/feeds', '可用源列表（JSON）'],
-          ].map(([path, desc]) => (
-            <tr key={path} style={{ borderBottom: '1px solid #eee' }}>
-              <td style={{ padding: '0.5rem 0', fontFamily: 'monospace' }}>{path}</td>
-              <td style={{ padding: '0.5rem 0', color: '#666' }}>{desc}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <div style={{ marginTop: '2rem', padding: '1rem', background: '#f5f5f5', borderRadius: '8px', fontSize: '0.85rem', color: '#888' }}>
-        <p style={{ margin: '0 0 0.5rem 0' }}>
-          <strong>工作原理：</strong>每 6 小时通过 Vercel Cron 自动抓取新文章，使用 MiniMax-M2.7 翻译后存入 Vercel Blob。
-          长文自动按 HTML 边界切片，批次内 5 路并发处理，翻译失败的文章会在下次运行时自动重试。
-        </p>
-        <p style={{ margin: 0 }}>
-          Powered by MiniMax-M2.7 &middot; Deployed on Vercel &middot; <a href="https://github.com/kahobusiness/rss-translator" style={{ color: '#888' }}>GitHub</a>
-        </p>
-      </div>
+      <section>
+        <div className={styles.sectionHeader}>
+          <h2 className={styles.sectionTitle}>API</h2>
+        </div>
+        <table className={styles.apiTable}>
+          <tbody>
+            {API_ROUTES.map(([path, desc]) => (
+              <tr key={path}>
+                <td className={styles.apiPath}>{path}</td>
+                <td className={styles.apiDesc}>{desc}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
     </main>
   );
 }

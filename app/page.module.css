@@ -1,0 +1,240 @@
+.main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 5rem 1.5rem 6rem;
+}
+
+.header {
+  margin-bottom: 3.5rem;
+}
+
+.eyebrow {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+  margin: 0 0 0.875rem 0;
+}
+
+.title {
+  font-size: 2.5rem;
+  font-weight: 600;
+  letter-spacing: -0.032em;
+  line-height: 1.1;
+  margin: 0 0 1rem 0;
+}
+
+.subtitle {
+  color: var(--fg-muted);
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  margin: 0;
+  max-width: 560px;
+}
+
+.subscribeCard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  margin: 2.5rem 0 4rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.subscribeLabel {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  margin: 0 0 0.875rem 0;
+}
+
+.subscribeRow {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.subscribeUrl {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.625rem 0.875rem;
+  font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875rem;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.subscribeHint {
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+  margin: 0.875rem 0 0 0;
+}
+
+.sectionHeader {
+  margin-top: 4rem;
+  margin-bottom: 2rem;
+}
+
+.sectionTitle {
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 0 0 0.5rem 0;
+}
+
+.sectionDesc {
+  color: var(--fg-muted);
+  font-size: 0.9375rem;
+  margin: 0;
+}
+
+.category {
+  margin-bottom: 2rem;
+}
+
+.categoryTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  margin: 0 0 0.75rem 0;
+}
+
+.categoryCount {
+  color: var(--fg-subtle);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 0.8rem;
+  font-feature-settings: "tnum";
+}
+
+.feedList {
+  display: grid;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.feedItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.875rem 1rem;
+  background: var(--surface);
+  transition: background 0.15s ease;
+}
+
+.feedItem:hover {
+  background: var(--surface-hover);
+}
+
+.feedMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.feedName {
+  font-weight: 500;
+  font-size: 0.9375rem;
+  color: var(--fg);
+  line-height: 1.3;
+}
+
+.feedLink {
+  font-size: 0.8rem;
+  color: var(--fg-subtle);
+  font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  transition: color 0.15s ease;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedLink:hover {
+  color: var(--fg-muted);
+}
+
+.feedPath {
+  font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.5rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.apiTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.apiTable td {
+  padding: 0.875rem 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.apiTable tr:last-child td {
+  border-bottom: none;
+}
+
+.apiPath {
+  font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  color: var(--fg);
+  width: 1%;
+  white-space: nowrap;
+  padding-right: 1.5rem !important;
+  font-size: 0.85rem;
+}
+
+.apiDesc {
+  color: var(--fg-muted);
+}
+
+@media (max-width: 640px) {
+  .main {
+    padding: 3rem 1.125rem 4rem;
+  }
+  .title {
+    font-size: 2rem;
+  }
+  .subtitle {
+    font-size: 1rem;
+  }
+  .feedItem {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  .feedPath {
+    align-self: flex-start;
+  }
+  .subscribeRow {
+    flex-direction: column;
+  }
+}

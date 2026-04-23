@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
+import './globals.css';
 
 export const metadata: Metadata = {
   title: 'RSS Translator',
-  description: '将RSS订阅源翻译成中文',
+  description: '精选英文技术博客的中文翻译 RSS 订阅源',
 };
 
 export default function RootLayout({
