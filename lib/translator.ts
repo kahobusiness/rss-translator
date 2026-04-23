@@ -21,9 +21,10 @@ const OUTPUT_MAX = 50_000;
 // 并发 10 → 单批 10 篇文章一轮跑完（2 × 100s 两轮容易撞 cron deadline）
 const CONCURRENCY = 10;
 // MiniMax-M2.7 实测吞吐 ~30 tok/s；单文章 5K 字符约 30s，3 文章合批要 90s+ 触发 abort。
-// 改为单文章一批，让 CONCURRENCY 承担并行度；超时设 100s 防止单调用拖死整个 cron 函数。
+// 改为单文章一批，让 CONCURRENCY 承担并行度；per-call 180s 兜住 15K 截断后的长文（100s 实测会撞 abort），
+// 万一仍不够由 220s translateBatch deadline 统一 abort。
 const MAX_ITEMS_PER_BATCH = 1;
-const API_CALL_TIMEOUT_MS = 100_000;
+const API_CALL_TIMEOUT_MS = 180_000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [500, 1500, 4000];
 
