@@ -5,7 +5,13 @@ import styles from './page.module.css';
 export const revalidate = 3600;
 
 const FEED_CATEGORIES: Record<string, string[]> = {
-  'AI 与深度思考': ['simonwillison-net', 'dwarkesh-com', 'gwern-net'],
+  'AI 与深度思考': [
+    'simonwillison-net',
+    'dwarkesh-com',
+    'gwern-net',
+    'garymarcus-substack-com',
+    'wheresyoured-at',
+  ],
   '系统与工程实践': [
     'antirez-com',
     'rachelbythebay-com',
@@ -16,6 +22,9 @@ const FEED_CATEGORIES: Record<string, string[]> = {
     'daringfireball-net',
     'construction-physics-com',
     'paulgraham-com',
+    'pluralistic-net',
+    'anildash-com',
+    'tedium-co',
   ],
   安全: ['krebsonsecurity-com', 'troyhunt-com', 'lcamtuf-substack-com'],
   '硬件与底层': ['righto-com', 'fabiensanglard-net'],
@@ -39,8 +48,7 @@ export default async function Home() {
         <p className={styles.eyebrow}>RSS · 中文翻译</p>
         <h1 className={styles.title}>精选英文技术博客，译成中文。</h1>
         <p className={styles.subtitle}>
-          {feeds.length} 个信源，每 6 小时自动更新。由 MiniMax-M2.7 翻译，
-          结果托管在 Vercel Blob。
+          {feeds.length} 个信源，每 6 小时自动更新，由 MiniMax-M2.7 翻译。
         </p>
       </header>
 

@@ -13,13 +13,15 @@ export interface FeedConfig {
 export const OPML_URL = process.env.OPML_URL ||
   'https://gist.githubusercontent.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b/raw/426957f043dc0054f95aae6c19de1d0b4ecc2bb2/hn-popular-blogs-2025.opml';
 
-// 精选信源白名单（从 92 个中筛选的 15 个高质量信源）
+// 精选信源白名单（从 92 个中筛选的 20 个高质量信源）
 // 设为 null 则不过滤，使用 OPML 中的全部信源
 const CURATED_FEED_IDS: Set<string> | null = new Set([
   // AI 与深度思考
   'simonwillison-net',
   'dwarkesh-com',
   'gwern-net',
+  'garymarcus-substack-com',
+  'wheresyoured-at',
   // 系统与工程实践
   'antirez-com',
   'rachelbythebay-com',
@@ -29,6 +31,9 @@ const CURATED_FEED_IDS: Set<string> | null = new Set([
   'daringfireball-net',
   'construction-physics-com',
   'paulgraham-com',
+  'pluralistic-net',
+  'anildash-com',
+  'tedium-co',
   // 安全
   'krebsonsecurity-com',
   'troyhunt-com',
