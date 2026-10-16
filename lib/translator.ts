@@ -40,8 +40,11 @@ export const defaultProvider: ChunkProvider = async (chunk, signal) => {
   }, { signal });
   if (message.stop_reason !== 'end_turn') throw new Error(`Incomplete model output: ${message.stop_reason}`);
   const text = message.content.filter(block => block.type === 'text').map(block => 'text' in block ? block.text : '').join('');
+  const usage = message.usage as typeof message.usage & {
+    cache_read_input_tokens?: number; cache_creation_input_tokens?: number;
+  };
   return { texts: parseTranslationResponse(text, chunk), inputTokens: message.usage.input_tokens +
-    (message.usage.cache_read_input_tokens || 0) + (message.usage.cache_creation_input_tokens || 0),
+    (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0),
     outputTokens: message.usage.output_tokens };
 };
 
