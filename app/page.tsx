@@ -2,7 +2,7 @@ import { getEnabledFeeds } from '@/config/feeds';
 import { CopyButton } from './components/CopyButton';
 import styles from './page.module.css';
 
-export const revalidate = 3600;
+export const dynamic = 'force-dynamic';
 
 const FEED_CATEGORIES: Record<string, string[]> = {
   'AI 与深度思考': [

@@ -15,6 +15,24 @@
     {
       "path": "/api/cron?batch=3",
       "schedule": "3 */6 * * *"
+    },
+    {
+      "path": "/api/cron?batch=0&work=1",
+      "schedule": "5,20,35,50 * * * *"
+    },
+    {
+      "path": "/api/cron?batch=1&work=1",
+      "schedule": "6,21,36,51 * * * *"
+    },
+    {
+      "path": "/api/cron?batch=2&work=1",
+      "schedule": "7,22,37,52 * * * *"
+    },
+    {
+      "path": "/api/cron?batch=3&work=1",
+      "schedule": "8,23,38,53 * * * *"
     }
-  ]
+  ],
+  "installCommand": "npm ci",
+  "buildCommand": "npm test && npm run lint && npm run build"
 }

@@ -1,119 +1,114 @@
 # RSS Translator
 
-将精选英文技术博客自动翻译成中文的 RSS 服务。基于 MiniMax-M2.7 翻译，部署在 Vercel 上，输出标准 RSS 格式，可直接在 Reeder 等阅读器中订阅。
+将 20 个精选技术博客翻译成中文，提供聚合与单源 RSS。运行在 Next.js 16 / Node.js 24 / Vercel，继续使用现有 MiniMax Anthropic 兼容 API。
 
-## 特性
+公开聚合订阅：<https://rss.kaho.io/api/feed/all>
 
-- 从 92 个 HN 热门博客中精选 20 个高质量信源，覆盖 AI、安全、系统、科技、硬件 5 个领域
-- MiniMax-M2.7 翻译，带专业 system prompt（保留代码/HTML 结构、技术术语首次标注英文）
-- Token-budget 动态打包：根据 204,800 上下文窗口自动分配输入/输出预算，长文 HTML-safe 切片
-- 批次内 5 路并发 + 指数退避重试，充分利用 500 RPM / 20M TPM 配额
-- RSS 内容不足时自动抓取原文全文，提升翻译质量
-- 翻译失败自动重试，不遗漏任何文章
-- 聚合订阅 + 单源订阅，文章标题标注来源
-- Vercel Blob 持久化存储，聚合索引加速查询
+## 工作方式
 
-## 快速开始
+1. 每 6 小时发现文章，4 个批次各抓取 5 个源。
+2. 每篇文章先进入持久化任务队列；任务保存原文、当前阶段、分块进度、重试时间、错误和 token 用量。
+3. 每 15 分钟的工作任务处理待完成文章。每批最多 4 篇并行、8 次模型请求，每篇每轮最多翻译 2 个分块。
+4. 模型只处理 HTML 中的文本和图片 alt；标签、链接、代码、pre、script、style、math、svg 等结构由程序保留，不交给模型改写。
+5. 不再截断长文。成功分块立即持久化，下一轮续跑缺失部分。全部分块完成后才发布新译文。
+6. 发布分别更新单源存档和聚合索引；若中途失败，任务保留待发布结果，重试不重新调用模型。
 
-### 部署到 Vercel
+旧实现中疑似被截断的长文，会从当前 RSS 和历史存档中发现并进入补译队列。历史补译需要后台逐步完成，不会因为部署完成就瞬间结束。
 
-1. Fork 此项目，在 [Vercel](https://vercel.com) 中导入
-2. 配置环境变量（见下方）
-3. 部署完成后，在 RSS 阅读器中订阅：
+## 存储与一致性
 
-```
-# 推荐 — 聚合订阅（20 个源合并）
-https://your-domain.vercel.app/api/feed/all
+- **私有 Blob**：存档、索引、任务、租约、配置缓存和版本化翻译检查点。通过 `get(..., { useCache: false })` 直接读取源站。
+- **原公开 Blob**：保留为只读兼容来源；迁移不会删除旧数据。
+- **本地开发**：使用 `data/`，通过文件锁和原子重命名实现条件更新。
 
-# 单独订阅
-https://your-domain.vercel.app/api/feed/simonwillison-net
-https://your-domain.vercel.app/api/feed/paulgraham-com
-```
+所有可变文档使用 ETag 条件写入；冲突会重新读取并重试，读取错误不会当成空文档覆盖。每个 Cron 批次和文章任务持有有期限的独占租约，旧持有者不能释放新租约。
 
-### 本地开发
+每源保留最近 100 个不同 GUID 的条目。每个批次维护合并历史的独立聚合分片；读取范围由 `vercel.json` 推导，合并并去重后输出最新 100 篇。失败原文不会作为中文译文发布。RSS 使用 UTF-8 流式响应，避免大正文被缓冲响应大小限制截断。
 
-```bash
-npm install
-cp .env.example .env.local  # 编辑填入 API 密钥
-npm run dev                  # http://localhost:3000
-```
+翻译检查点版本包含原文、标题、模型、API 端点、提示词及结构版本。每篇文章的检查点一次读取，已完成分块不因其他分块失败而丢失。
+
+## 信源配置与故障回退
+
+`config/feeds.ts` 的白名单筛选 OPML 中的 20 个源，`config/default-feeds.json` 保存验证过的应急快照。
+
+回退顺序为：新鲜内存缓存 → 新鲜持久化缓存 → 获取 OPML → 过期但有效的缓存 → 仓库快照。OPML 为空、没有符合白名单的源或请求失败时，不能覆盖有效缓存。失败后短暂冷却，随后重新尝试；不会把失败时间当成成功刷新时间。
+
+RSS 原生正文优先于摘要。缺失或无效发布时间使用稳定占位日期，而不是每次轮询都将旧文章改成“刚发布”。
 
 ## 环境变量
 
-### 翻译 API（必须配置）
+| 变量 | 用途 |
+| --- | --- |
+| `API_KEY` | MiniMax / Anthropic 兼容 API 密钥，必须 |
+| `API_BASE_URL` | 默认 `https://api.minimaxi.com/anthropic` |
+| `MODEL_NAME` | 默认 `MiniMax-M2.7` |
+| `CRON_SECRET` | Cron 和状态接口的 Bearer 密钥，必须；未配置时接口关闭 |
+| `SITE_URL` | 稳定公开域名，例如 `https://rss.kaho.io` |
+| `STATE_BLOB_STORE_ID` | 私有 Blob 的 store ID，生产环境必须配置私有存储 |
+| `STATE_BLOB_READ_WRITE_TOKEN` | 私有 Blob 的可选显式凭据；否则使用项目 OIDC |
+| `RSS_STATE_READ_WRITE_TOKEN` | 当前项目连接私有存储时自动提供的凭据别名 |
+| `BLOB_READ_WRITE_TOKEN` | 旧公开存储的兼容读取凭据；新项目不需要旧存储 |
+| `TRANSLATION_PROMPT_VERSION` | 手动升级提示词/术语策略的缓存版本，默认 `1` |
+| `OPML_URL` | 自定义 OPML 地址 |
+| `GITHUB_TOKEN` | 可选，降低 GitHub Gist API 匿名限流风险 |
 
-**MiniMax（默认）：**
+私有存储应与项目连接。不要用公开 CDN 读取来实现锁或队列即时状态。订阅地址优先使用 `SITE_URL`，其次使用稳定生产域名或请求来源，绝不使用部署专属的 `VERCEL_URL`。
 
-| 变量 | 说明 |
-|------|------|
-| `API_KEY` | MiniMax API 密钥 |
-| `API_BASE_URL` | 可选，默认 `https://api.minimaxi.com/anthropic` |
-| `MODEL_NAME` | 可选，默认 `MiniMax-M2.7` |
+## API 和监控
 
-**官方 Anthropic API：**
+| 端点 | 用途 |
+| --- | --- |
+| `GET /api/feeds` | 公开订阅列表 |
+| `GET /api/feed/all` | 聚合中文 RSS |
+| `GET /api/feed/[id]` | 单源中文 RSS |
+| `GET /api/cron?batch=N` | 发现文章并处理队列，需要 Bearer 密钥 |
+| `GET /api/cron?batch=N&work=1` | 仅处理持久化队列，需要 Bearer 密钥 |
+| `GET /api/cron?batch=N&dryRun=1` | 严格只读诊断，不调用模型或写入任务 |
+| `GET /api/status` | 受保护的运行状态；支持 `state=failed`、`feed=源ID` 和 `limit=20` |
 
-| 变量 | 说明 |
-|------|------|
-| `API_KEY` | Anthropic API 密钥 |
-| `API_BASE_URL` | 设为 `https://api.anthropic.com` |
-| `MODEL_NAME` | 设为 `claude-sonnet-4-20250514` |
+状态接口返回各批次上次运行、近期 48 次运行记录、源抓取错误、任务积压、失败阶段、分块进度、重试时间以及实际 API/token 统计。未初始化、超过 8 小时没有成功发现文章、配置降级、源抓取失败或任务失败时返回 503，健康时返回 200。Vercel 结构化运行日志也记录源错误和批次结果，可供现有告警系统采集。
 
-### 存储与其他
+失败任务持续按指数退避重试，最长间隔 24 小时。已经完成的分块保留；单轮执行期限导致的暂停不算作翻译失败。调度使用 UTC，见 `vercel.json`。
 
-| 变量 | 必须 | 说明 |
-|------|------|------|
-| `BLOB_READ_WRITE_TOKEN` | 生产环境必须 | Vercel Blob 存储 token |
-| `CRON_SECRET` | 推荐 | 保护 cron 端点的 Bearer token |
-| `OPML_URL` | 可选 | 自定义 OPML 源地址 |
-| `GITHUB_TOKEN` | 可选 | 避免 GitHub API 匿名限流 |
+## 本地开发和验证
 
-## API 端点
+```bash
+npm ci
+cp .env.example .env.local
+npm run dev
 
-| 端点 | 描述 |
-|------|------|
-| `/api/feed/all` | 聚合所有源的翻译 RSS（推荐订阅） |
-| `/api/feed/[id]` | 单个源的翻译 RSS |
-| `/api/feeds` | 所有可用源列表（JSON） |
-| `/api/cron?batch=N` | 定时任务入口（Vercel Cron 自动调用） |
+npm test
+npm run lint
+npm run check
+```
 
-## 信源管理
+项目锁文件与 `.npmrc` 固定安装行为，Vercel 使用 `npm ci`，构建前执行测试和 ESLint。测试启动时会清除继承的生产凭据，避免云端构建测试误写生产数据。
 
-默认从 [HN Popular Blogs 2025 OPML](https://gist.github.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b) 加载 92 个博客源，通过 `config/feeds.ts` 中的 `CURATED_FEED_IDS` 白名单筛选为 20 个精选信源。
+真实集成验证需先获准临时读取生产环境变量，完成后删除临时文件：
 
-当前精选覆盖的领域：
+```bash
+node --env-file=.env.production.local scripts/verify-blob-cas.ts
+node --env-file=.env.production.local scripts/benchmark-translator.ts
+```
 
-| 领域 | 数量 | 代表信源 |
-|------|------|----------|
-| AI 与深度思考 | 5 | Simon Willison, Dwarkesh Patel, Gwern, Gary Marcus, Ed Zitron |
-| 系统与工程实践 | 4 | antirez, Rachel Kroll, Armin Ronacher, Mitchell Hashimoto |
-| 科技行业与文化 | 6 | Daring Fireball, Construction Physics, Paul Graham, Cory Doctorow, Anil Dash, Tedium |
-| 安全 | 3 | Krebs on Security, Troy Hunt, lcamtuf |
-| 硬件与底层 | 2 | Ken Shirriff, Fabien Sanglard |
+前者使用独立临时路径验证真实条件冲突和租约并清理探针。后者对现有模型执行小规模完整性/耗时/token 验证，保留代码与链接，并清理测试检查点；报告保存在 `/tmp/rss-translation-smoke.json`。单个样本不能证明某模型是所有模型中的最优选择。
 
-修改精选列表：编辑 `config/feeds.ts` 中的 `CURATED_FEED_IDS` Set。设为 `null` 可使用 OPML 中的全部信源。
+## 迁移、修复和回滚
 
-## 翻译策略
+```bash
+# 先备份旧文档，再仅创建尚不存在的私有副本；公开存档保持不变。
+node --env-file=.env.production.local scripts/migrate-state.ts
 
-针对 MiniMax-M2.7 的 204,800 token 上下文窗口设计了三层策略：
+# 默认仅检查；显式 --write 才重建聚合索引，并强制先备份。
+node --env-file=.env.production.local scripts/rebuild-recent-index.ts
+node --env-file=.env.production.local scripts/rebuild-recent-index.ts --write --backup-dir /tmp/rss-index-backup
+```
 
-1. **单篇切片**：超过 50K token 的长文按 HTML 块级标签边界切分，无损重组
-2. **动态打包**：按 140K token 输入预算贪心装箱，短文一批装 10-20 篇，长文独占
-3. **动态输出**：`max_tokens` 按输入动态计算（上限 50K），替代固定值
+首次迁移清理了私有副本中的重复 GUID，备份位于 `/tmp/rss-state-migration-backup/`。这类本机临时备份不会跟随部署上传；需要长期保存时应另行归档。过去已被旧版 100 条上限挤出的文章无法仅凭现有存档恢复。
 
-批次内 5 路并发处理，429/5xx 错误自动指数退避重试（500ms / 1.5s / 4s + 抖动）。
+回滚前应先停用新增工作 Cron，确认没有新 worker 在运行，再回退应用。旧版仅认识公开存档，回退后不会看到私有存储中新完成的译文；私有数据仍保留，恢复新版后可继续使用。不要清空私有存储作为回滚手段。
 
-## 定时更新
-
-`vercel.json` 配置了 4 个 cron 批次（batch 0-3），每 6 小时交错执行，每批处理 5 个 feed（共 20 个）。
-
-翻译失败的文章会被标记为 `translated: false`，在下次 cron 中自动重试。
-
-## 存储
-
-- **生产环境**：Vercel Blob（持久化）
-- **本地开发**：`./data/` 目录（文件系统）
-
-每个 feed 保留最近 100 篇文章。聚合索引 `_recent_items.json` 缓存最新 100 篇，避免全量扫描。
+生产依赖的 `npm audit --omit=dev` 检查已通过。开发工具链仍存在由 `eslint-config-next → fast-glob → micromatch → braces` 引入的上游安全通告；当前没有兼容修复版本，未采用会降级框架工具的 `audit fix --force`。
 
 ## License
 

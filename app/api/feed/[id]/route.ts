@@ -3,6 +3,8 @@ import { Feed } from 'feed';
 import { loadFeed } from '@/lib/storage';
 import { getFeedConfig } from '@/config/feeds';
 import { escapeHtml, stripHtmlTags } from '@/lib/utils';
+import { getSiteUrl } from '@/lib/site-url';
+import { rssResponse } from '@/lib/rss-response';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,9 +31,7 @@ export async function GET(
   }
 
   // 构建RSS feed
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : 'http://localhost:3000';
+  const baseUrl = getSiteUrl(request);
 
   const feed = new Feed({
     title: `${storedFeed.feedTitle} (中文翻译)`,
@@ -48,7 +48,7 @@ export async function GET(
   });
 
   // 添加文章
-  for (const item of storedFeed.items) {
+  for (const item of storedFeed.items.filter(i => i.translated !== false)) {
     const safeDescription = stripHtmlTags(item.translatedContent).substring(0, 500) + '...';
 
     feed.addItem({
@@ -77,10 +77,5 @@ export async function GET(
   // 返回RSS XML
   const rssXml = feed.rss2();
 
-  return new NextResponse(rssXml, {
-    headers: {
-      'Content-Type': 'application/rss+xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=300, s-maxage=300',
-    },
-  });
+  return rssResponse(rssXml);
 }

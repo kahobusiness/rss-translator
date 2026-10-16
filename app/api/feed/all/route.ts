@@ -1,16 +1,15 @@
-import { NextResponse } from 'next/server';
 import { Feed } from 'feed';
 import { getAllTranslatedItems } from '@/lib/storage';
 import { escapeHtml, stripHtmlTags } from '@/lib/utils';
+import { getSiteUrl } from '@/lib/site-url';
+import { rssResponse } from '@/lib/rss-response';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: Request) {
   const items = await getAllTranslatedItems(100);
 
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : 'http://localhost:3000';
+  const baseUrl = getSiteUrl(request);
 
   const feed = new Feed({
     title: 'RSS Translator - 所有翻译内容',
@@ -26,7 +25,7 @@ export async function GET() {
     },
   });
 
-  for (const item of items) {
+  for (const item of items.filter(i => i.translated !== false)) {
     // 在标题前添加来源标识
     const titleWithSource = item.sourceFeedName
       ? `[${item.sourceFeedName}] ${item.translatedTitle}`
@@ -63,10 +62,5 @@ export async function GET() {
 
   const rss = feed.rss2();
 
-  return new NextResponse(rss, {
-    headers: {
-      'Content-Type': 'application/xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=300, s-maxage=300',
-    },
-  });
+  return rssResponse(rss);
 }
