@@ -4,6 +4,8 @@ import { assembleTranslation, createTranslationPlan, estimateTokens, parseTransl
 import { translateArticle } from '../lib/translator.ts';
 import { memoryStore } from './memory-store.ts';
 import type { ChunkProvider } from '../lib/translator.ts';
+import { CHUNK_TOKEN_BUDGET } from '../lib/translation-plan.ts';
+import { modelProfile } from '../lib/model-config.ts';
 
 test('long HTML is covered without truncation; code and markup remain exact', () => {
   const content = '<article><h1>Hello</h1><p>' + 'Long text with words. '.repeat(3000) +
@@ -11,7 +13,7 @@ test('long HTML is covered without truncation; code and markup remain exact', ()
   const input = { id: 'long', title: 'Title', content };
   const plan = createTranslationPlan(input);
   assert.ok(plan.chunks.length > 3);
-  assert.ok(plan.chunks.every(c => c.units.reduce((n, u) => n + estimateTokens(u.text) + 20, 0) <= 1820));
+  assert.ok(plan.chunks.every(c => c.units.reduce((n, u) => n + estimateTokens(u.text) + 20, 0) <= CHUNK_TOKEN_BUDGET + 20));
   assert.ok(plan.units.every(u => !u.text.includes('const x')));
   const identity = Object.fromEntries(plan.units.map(u => [u.id, u.text]));
   assert.equal(assembleTranslation(input, plan, identity).translatedContent, content);
@@ -19,6 +21,13 @@ test('long HTML is covered without truncation; code and markup remain exact', ()
   const result = assembleTranslation(input, plan, hostile).translatedContent;
   assert.ok(result.includes('&lt;script&gt;'));
   assert.ok(result.includes('<img src="https://example.com/a.png"'));
+});
+
+test('Flash uses low reasoning with bounded output and legacy models retain their budgets', () => {
+  assert.deepEqual(modelProfile('MiniMax-M3.1-Flash-Preview').output_config, { effort: 'low' });
+  assert.equal(modelProfile('MiniMax-M3.1-Flash-Preview').chunkTokens, 3600);
+  assert.equal(modelProfile('MiniMax-M2.7').chunkTokens, 1800);
+  assert.equal(modelProfile('MiniMax-M2.7').output_config, undefined);
 });
 
 test('cache versions include title, body, model, endpoint and prompt revision', () => {

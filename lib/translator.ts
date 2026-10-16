@@ -3,6 +3,8 @@ import { getChunkCache, setCachedChunk } from './chunk-cache.ts';
 import { assembleTranslation, createTranslationPlan, parseTranslationResponse, SYSTEM_PROMPT } from './translation-plan.ts';
 import type { TranslationChunk, TranslationInput } from './translation-plan.ts';
 import type { JsonStore } from './json-store.ts';
+import { API_BASE_URL, MODEL_NAME, modelProfile } from './model-config.ts';
+export { MODEL_NAME } from './model-config.ts';
 export type { TranslationInput } from './translation-plan.ts';
 
 export interface TranslationResult { translatedTitle: string; translatedContent: string }
@@ -22,8 +24,6 @@ export interface ArticleProgress {
 }
 
 let client: Anthropic | undefined;
-export const MODEL_NAME = process.env.MODEL_NAME || 'MiniMax-M2.7';
-const API_BASE_URL = process.env.API_BASE_URL || process.env.ANTHROPIC_BASE_URL || 'https://api.minimaxi.com/anthropic';
 
 export const defaultProvider: ChunkProvider = async (chunk, signal) => {
   const key = process.env.API_KEY || process.env.ANTHROPIC_API_KEY;
@@ -31,13 +31,17 @@ export const defaultProvider: ChunkProvider = async (chunk, signal) => {
   const official = /(^|\.)anthropic\.com$/i.test(new URL(API_BASE_URL).hostname);
   client ??= new Anthropic({ ...(official ? { apiKey: key } : { authToken: key }),
     baseURL: API_BASE_URL, maxRetries: 0 });
+  const profile = modelProfile();
+  // MiniMax's documented extension is structurally passed through the SDK.
   const message = await client.messages.create({
-    model: MODEL_NAME, max_tokens: 8192, system: SYSTEM_PROMPT,
+    ...(profile.output_config ? { output_config: profile.output_config } : {}),
+    model: MODEL_NAME, max_tokens: profile.maxOutputTokens, system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: JSON.stringify({ fragments: chunk.units.map(({ id, text }) => ({ id, text })) }) }],
   }, { signal });
   if (message.stop_reason !== 'end_turn') throw new Error(`Incomplete model output: ${message.stop_reason}`);
   const text = message.content.filter(block => block.type === 'text').map(block => 'text' in block ? block.text : '').join('');
-  return { texts: parseTranslationResponse(text, chunk), inputTokens: message.usage.input_tokens,
+  return { texts: parseTranslationResponse(text, chunk), inputTokens: message.usage.input_tokens +
+    (message.usage.cache_read_input_tokens || 0) + (message.usage.cache_creation_input_tokens || 0),
     outputTokens: message.usage.output_tokens };
 };
 
@@ -69,7 +73,7 @@ export async function translateArticle(input: TranslationInput, options: {
       for (let attempt = 0; attempt < 2; attempt++) {
         const remaining = deadline - Date.now() - 5000;
         if (remaining <= 0) break;
-        const signal = AbortSignal.timeout(Math.min(75_000, remaining));
+        const signal = AbortSignal.timeout(Math.min(modelProfile().timeoutMs, remaining));
         if (options.budget && options.budget.remaining <= 0) break;
         if (options.budget) options.budget.remaining--;
         usage.calls++;

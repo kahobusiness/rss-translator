@@ -33,8 +33,15 @@ export function createJsonStore(root = path.join(process.cwd(), 'data')): JsonSt
   async function read<T>(key: string): Promise<Snapshot<T> | null> {
     if (blobConfigured()) {
       const result = await get(key, { ...stateBlobOptions(), access: 'private', useCache: false,
+        // Compression can replace the origin strong ETag with W/"...", which
+        // cannot satisfy If-Match. Read the unencoded representation for CAS.
+        headers: { 'Accept-Encoding': 'identity' },
         abortSignal: AbortSignal.timeout(20_000) });
       if (result?.statusCode === 200) {
+        if (!result.blob.etag || result.blob.etag.startsWith('W/')) {
+          await result.stream.cancel();
+          throw new Error(`Strong origin ETag required for conditional writes: ${key}`);
+        }
         return { value: await new Response(result.stream).json() as T, etag: result.blob.etag };
       }
       // Existing public archives are a read-only migration source. A null ETag

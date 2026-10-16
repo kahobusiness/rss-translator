@@ -15,6 +15,8 @@
 
 旧实现中疑似被截断的长文，会从当前 RSS 和历史存档中发现并进入补译队列。历史补译需要后台逐步完成，不会因为部署完成就瞬间结束。
 
+M3.1 Flash 使用 `output_config.effort=low`，每块约 3600 个估算输入 token、最多 16384 个输出 token（含思考），单次最多 100 秒。100 万 token 是上下文容量，不代表应一次输出整篇超长文章；仍保留分块检查点及完整性校验。模型和请求预算均参与检查点版本，切换模型不会混用译文。旧 M2.7 显式配置仍使用原分块预算。
+
 ## 存储与一致性
 
 - **私有 Blob**：存档、索引、任务、租约、配置缓存和版本化翻译检查点。通过 `get(..., { useCache: false })` 直接读取源站。
@@ -40,8 +42,8 @@ RSS 原生正文优先于摘要。缺失或无效发布时间使用稳定占位�
 | 变量 | 用途 |
 | --- | --- |
 | `API_KEY` | MiniMax / Anthropic 兼容 API 密钥，必须 |
-| `API_BASE_URL` | 默认 `https://api.minimaxi.com/anthropic` |
-| `MODEL_NAME` | 默认 `MiniMax-M2.7` |
+| `API_BASE_URL` | 默认 `https://api.minimax.cn/anthropic` |
+| `MODEL_NAME` | 默认 `MiniMax-M3.1-Flash-Preview` |
 | `CRON_SECRET` | Cron 和状态接口的 Bearer 密钥，必须；未配置时接口关闭 |
 | `SITE_URL` | 稳定公开域名，例如 `https://rss.kaho.io` |
 | `STATE_BLOB_STORE_ID` | 私有 Blob 的 store ID，生产环境必须配置私有存储 |
