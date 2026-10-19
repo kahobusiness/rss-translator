@@ -49,6 +49,14 @@ test('reject incomplete, duplicate and empty model responses', () => {
   assert.throws(() => parseTranslationResponse('{"translations":[{"id":"title","text":"好"},{"id":"title","text":"好"}]}', chunk));
 });
 
+test('dense inline markup has bounded fragment count without losing any source text', () => {
+  const input = { id: 'inline', title: 'Links', content: '<p>' +
+    Array.from({ length: 180 }, (_, i) => `Some <a href="/${i}">linked words ${i}</a> between links. `).join('') + '</p>' };
+  const plan = createTranslationPlan(input);
+  assert.ok(plan.chunks.every(c => c.units.length <= 32));
+  assert.equal(assembleTranslation(input, plan, Object.fromEntries(plan.units.map(u => [u.id, u.text]))).translatedContent, input.content);
+});
+
 test('partial work resumes using immutable chunks and never returns a partial article', async () => {
   const store = memoryStore();
   const input = { id: 'resume', title: 'Title', content: '<p>' + 'Very long article. '.repeat(2000) + '</p>' };

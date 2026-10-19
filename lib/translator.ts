@@ -36,10 +36,18 @@ export const defaultProvider: ChunkProvider = async (chunk, signal) => {
   const message = await client.messages.create({
     ...(profile.output_config ? { output_config: profile.output_config } : {}),
     model: MODEL_NAME, max_tokens: profile.maxOutputTokens, system: SYSTEM_PROMPT,
+    tools: [{ name: 'submit_translation', description: 'Submit complete translations for every input fragment.',
+      input_schema: { type: 'object', required: ['translations'], additionalProperties: false,
+        properties: { translations: { type: 'array', minItems: chunk.units.length, maxItems: chunk.units.length,
+          items: { type: 'object', required: ['id', 'text'], additionalProperties: false,
+            properties: { id: { type: 'string', enum: chunk.units.map(u => u.id) }, text: { type: 'string', minLength: 1 } } } } } } }],
+    tool_choice: { type: 'tool', name: 'submit_translation' },
     messages: [{ role: 'user', content: JSON.stringify({ fragments: chunk.units.map(({ id, text }) => ({ id, text })) }) }],
   }, { signal });
-  if (message.stop_reason !== 'end_turn') throw new Error(`Incomplete model output: ${message.stop_reason}`);
-  const text = message.content.filter(block => block.type === 'text').map(block => 'text' in block ? block.text : '').join('');
+  if (message.stop_reason !== 'tool_use') throw new Error(`Incomplete model output: ${message.stop_reason}`);
+  const submissions = message.content.filter(block => block.type === 'tool_use' && block.name === 'submit_translation');
+  if (submissions.length !== 1 || submissions[0].type !== 'tool_use') throw new Error('Expected one translation submission');
+  const text = JSON.stringify(submissions[0].input);
   const usage = message.usage as typeof message.usage & {
     cache_read_input_tokens?: number; cache_creation_input_tokens?: number;
   };
