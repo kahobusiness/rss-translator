@@ -171,8 +171,9 @@ export async function processJob(id: string, batch: number, deadline: number, bu
       job.stage = 'complete';
       job.error = undefined;
       job.retryAt = undefined;
-      // Avoid storing a second copy of a completed article forever.
-      job.result = undefined;
+      // A rolling feed keeps only its latest 100 articles. Retain the complete
+      // result in the private job payload even when an older article falls
+      // outside that window; otherwise completing the job loses its only copy.
       job.preparedContent = undefined;
       job.item = { ...job.item, content: '' };
     }

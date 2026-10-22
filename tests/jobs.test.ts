@@ -26,6 +26,9 @@ test('queued long article survives repeated runs; publishes only after all chunk
   }
   assert.equal(run.summary?.stage, 'complete');
   assert.equal(published, 1);
+  const completed = (await store.read<ArticleJob>(jobKey(queued.id)))!.value;
+  assert.equal(completed.result?.translationComplete, true);
+  assert.equal(completed.result?.originalContent, item.content);
   const repeat = await processJob(queued.id, 0, Date.now() + 30_000, { remaining: 2 }, dependencies);
   assert.equal(repeat.usage.calls, 0);
   assert.equal(published, 1);
