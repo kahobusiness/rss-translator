@@ -1,0 +1,142 @@
+[
+  {
+    "id": "simonwillison-net",
+    "name": "simonwillison.net",
+    "url": "https://simonwillison.net/atom/everything/",
+    "htmlUrl": "https://simonwillison.net",
+    "enabled": true
+  },
+  {
+    "id": "krebsonsecurity-com",
+    "name": "krebsonsecurity.com",
+    "url": "https://krebsonsecurity.com/feed/",
+    "htmlUrl": "https://krebsonsecurity.com",
+    "enabled": true
+  },
+  {
+    "id": "daringfireball-net",
+    "name": "daringfireball.net",
+    "url": "https://daringfireball.net/feeds/main",
+    "htmlUrl": "https://daringfireball.net",
+    "enabled": true
+  },
+  {
+    "id": "antirez-com",
+    "name": "antirez.com",
+    "url": "http://antirez.com/rss",
+    "htmlUrl": "http://antirez.com",
+    "enabled": true
+  },
+  {
+    "id": "pluralistic-net",
+    "name": "pluralistic.net",
+    "url": "https://pluralistic.net/feed/",
+    "htmlUrl": "https://pluralistic.net",
+    "enabled": true
+  },
+  {
+    "id": "lcamtuf-substack-com",
+    "name": "lcamtuf.substack.com",
+    "url": "https://lcamtuf.substack.com/feed",
+    "htmlUrl": "https://lcamtuf.substack.com",
+    "enabled": true
+  },
+  {
+    "id": "mitchellh-com",
+    "name": "mitchellh.com",
+    "url": "https://mitchellh.com/feed.xml",
+    "htmlUrl": "https://mitchellh.com",
+    "enabled": true
+  },
+  {
+    "id": "righto-com",
+    "name": "righto.com",
+    "url": "https://www.righto.com/feeds/posts/default",
+    "htmlUrl": "https://righto.com",
+    "enabled": true
+  },
+  {
+    "id": "lucumr-pocoo-org",
+    "name": "lucumr.pocoo.org",
+    "url": "https://lucumr.pocoo.org/feed.atom",
+    "htmlUrl": "https://lucumr.pocoo.org",
+    "enabled": true
+  },
+  {
+    "id": "garymarcus-substack-com",
+    "name": "garymarcus.substack.com",
+    "url": "https://garymarcus.substack.com/feed",
+    "htmlUrl": "https://garymarcus.substack.com",
+    "enabled": true
+  },
+  {
+    "id": "rachelbythebay-com",
+    "name": "rachelbythebay.com",
+    "url": "https://rachelbythebay.com/w/atom.xml",
+    "htmlUrl": "https://rachelbythebay.com",
+    "enabled": true
+  },
+  {
+    "id": "construction-physics-com",
+    "name": "construction-physics.com",
+    "url": "https://www.construction-physics.com/feed",
+    "htmlUrl": "https://construction-physics.com",
+    "enabled": true
+  },
+  {
+    "id": "tedium-co",
+    "name": "tedium.co",
+    "url": "https://feed.tedium.co/",
+    "htmlUrl": "https://tedium.co",
+    "enabled": true
+  },
+  {
+    "id": "dwarkesh-com",
+    "name": "dwarkesh.com",
+    "url": "https://www.dwarkeshpatel.com/feed",
+    "htmlUrl": "https://dwarkesh.com",
+    "enabled": true
+  },
+  {
+    "id": "wheresyoured-at",
+    "name": "wheresyoured.at",
+    "url": "https://www.wheresyoured.at/rss/",
+    "htmlUrl": "https://wheresyoured.at",
+    "enabled": true
+  },
+  {
+    "id": "paulgraham-com",
+    "name": "paulgraham.com",
+    "url": "http://www.aaronsw.com/2002/feeds/pgessays.rss",
+    "htmlUrl": "https://paulgraham.com",
+    "enabled": true
+  },
+  {
+    "id": "fabiensanglard-net",
+    "name": "fabiensanglard.net",
+    "url": "https://fabiensanglard.net/rss.xml",
+    "htmlUrl": "https://fabiensanglard.net",
+    "enabled": true
+  },
+  {
+    "id": "gwern-net",
+    "name": "gwern.net",
+    "url": "https://gwern.substack.com/feed",
+    "htmlUrl": "https://gwern.net",
+    "enabled": true
+  },
+  {
+    "id": "troyhunt-com",
+    "name": "troyhunt.com",
+    "url": "https://www.troyhunt.com/rss/",
+    "htmlUrl": "https://troyhunt.com",
+    "enabled": true
+  },
+  {
+    "id": "anildash-com",
+    "name": "anildash.com",
+    "url": "https://anildash.com/feed.xml",
+    "htmlUrl": "https://anildash.com",
+    "enabled": true
+  }
+]

@@ -78,10 +78,10 @@ export async function parseOPML(content: string): Promise<OPMLFeed> {
 export async function fetchOPML(url: string): Promise<OPMLFeed> {
   // 对于GitHub Gist，使用API获取内容
   if (url.includes('gist.githubusercontent.com')) {
-    const gistMatch = url.match(/gist\.githubusercontent\.com\/([^/]+)\/([^/]+)/);
+    const gistMatch = url.match(/gist\.githubusercontent\.com\/([^/]+)\/([^/]+)(?:\/raw\/([a-f0-9]{40}))?/);
     if (gistMatch) {
       const gistId = gistMatch[2];
-      const apiUrl = `https://api.github.com/gists/${gistId}`;
+      const apiUrl = `https://api.github.com/gists/${gistId}${gistMatch[3] ? `/${gistMatch[3]}` : ''}`;
       const headers: Record<string, string> = {
         'Accept': 'application/vnd.github.v3+json',
         'User-Agent': 'RSS-Translator/1.0',
@@ -89,7 +89,7 @@ export async function fetchOPML(url: string): Promise<OPMLFeed> {
       if (process.env.GITHUB_TOKEN) {
         headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
       }
-      const response = await fetch(apiUrl, { headers });
+      const response = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(15_000) });
 
       if (!response.ok) {
         throw new Error(`Failed to fetch gist: ${response.status}`);
@@ -111,6 +111,7 @@ export async function fetchOPML(url: string): Promise<OPMLFeed> {
 
   // 普通URL直接获取
   const response = await fetch(url, {
+    signal: AbortSignal.timeout(15_000),
     headers: {
       'User-Agent': 'RSS-Translator/1.0',
     },

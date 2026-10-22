@@ -1,6 +1,5 @@
 import Parser from 'rss-parser';
 import { createHash } from 'crypto';
-import { withTimeout } from '@/lib/article-fetcher';
 
 export interface ParsedItem {
   guid: string;
@@ -20,12 +19,7 @@ export interface ParsedFeed {
   items: ParsedItem[];
 }
 
-const parser = new Parser({
-  timeout: 10000,
-  headers: {
-    'User-Agent': 'RSS-Translator/1.0',
-  },
-});
+const parser = new Parser();
 
 // 无 guid/link/title 的极端场景，用内容特征派生稳定 ID，防止多条空串互相覆盖
 function stableFallbackGuid(feedUrl: string, title: string, pubDate: string, content: string): string {
@@ -34,7 +28,14 @@ function stableFallbackGuid(feedUrl: string, title: string, pubDate: string, con
 }
 
 async function parseFeedInner(feedUrl: string): Promise<ParsedFeed> {
-  const feed = await parser.parseURL(feedUrl);
+  const response = await fetch(feedUrl, {
+    headers: { 'User-Agent': 'RSS-Translator/2.0', Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9' },
+    signal: AbortSignal.timeout(20_000), cache: 'no-store',
+  });
+  if (!response.ok) throw new Error(`RSS fetch HTTP ${response.status}: ${feedUrl}`);
+  const xml = await response.text();
+  if (xml.length > 10_000_000) throw new Error('RSS exceeds 10 MB limit');
+  const feed = await parser.parseString(xml);
 
   return {
     title: feed.title || 'Untitled Feed',
@@ -43,8 +44,9 @@ async function parseFeedInner(feedUrl: string): Promise<ParsedFeed> {
     items: feed.items.map(item => {
       const title = item.title || 'Untitled';
       const link = item.link || '';
-      const content = item.content || item['content:encoded'] || item.contentSnippet || '';
-      const pubDate = item.pubDate || item.isoDate || new Date().toISOString();
+      const content = item['content:encoded'] || item.content || item.contentSnippet || '';
+      const candidate = item.isoDate || item.pubDate;
+      const pubDate = candidate && Number.isFinite(Date.parse(candidate)) ? new Date(candidate).toISOString() : '1970-01-01T00:00:00.000Z';
       const guid = item.guid || item.link || item.title || stableFallbackGuid(feedUrl, title, pubDate, content);
       return {
         guid,
@@ -62,9 +64,7 @@ async function parseFeedInner(feedUrl: string): Promise<ParsedFeed> {
 
 export async function parseFeed(url: string): Promise<ParsedFeed> {
   try {
-    const result = await withTimeout(parseFeedInner(url), 15000);
-    if (!result) throw new Error(`Feed parse timeout: ${url}`);
-    return result;
+    return await parseFeedInner(url);
   } catch (error) {
     console.error(`Error parsing feed ${url}:`, error);
     throw error;

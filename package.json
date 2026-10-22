@@ -6,27 +6,36 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint app lib config",
+    "test": "node --import ./tests/setup.ts --test tests/*.test.ts",
+    "rebuild:index": "node scripts/rebuild-recent-index.ts",
+    "check": "npm test && npm run lint && tsc --noEmit && npm run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
     "@extractus/article-extractor": "^8.0.20",
-    "@vercel/blob": "^2.1.0",
+    "@vercel/blob": "2.8.2",
+    "entities": "8.1.0",
     "feed": "^4.2.2",
-    "next": "^15.5.12",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
+    "htmlparser2": "12.0.0",
+    "next": "16.4.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "rss-parser": "^3.13.0",
     "xml2js": "^0.6.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.3",
-    "@types/node": "^20.17.10",
-    "@types/react": "^19.2.13",
-    "@types/react-dom": "^19.2.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "@types/xml2js": "^0.4.14",
     "eslint": "^9.39.2",
-    "eslint-config-next": "^15.5.12",
+    "eslint-config-next": "16.4.2",
     "typescript": "^5.7.2"
-  }
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "type": "module"
 }

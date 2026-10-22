@@ -1,8 +1,9 @@
 import { getEnabledFeeds } from '@/config/feeds';
 import { CopyButton } from './components/CopyButton';
 import styles from './page.module.css';
+import { MODEL_NAME } from '@/lib/model-config';
 
-export const revalidate = 3600;
+export const dynamic = 'force-dynamic';
 
 const FEED_CATEGORIES: Record<string, string[]> = {
   'AI 与深度思考': [
@@ -48,7 +49,7 @@ export default async function Home() {
         <p className={styles.eyebrow}>RSS · 中文翻译</p>
         <h1 className={styles.title}>精选英文技术博客，译成中文。</h1>
         <p className={styles.subtitle}>
-          {feeds.length} 个信源，每 6 小时自动更新，由 MiniMax-M2.7 翻译。
+          {feeds.length} 个信源，每 6 小时自动更新，由 {MODEL_NAME} 翻译。
         </p>
       </header>
 

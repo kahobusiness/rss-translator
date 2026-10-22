@@ -1,14 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getEnabledFeeds, OPML_URL } from '@/config/feeds';
+import { getSiteUrl } from '@/lib/site-url';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: Request) {
   const feeds = await getEnabledFeeds();
 
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : 'http://localhost:3000';
+  const baseUrl = getSiteUrl(request);
 
   const feedList = feeds.map(feed => ({
     id: feed.id,

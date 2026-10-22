@@ -1,409 +1,125 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { getCachedChunk, setCachedChunk, hashChunkContent } from '@/lib/chunk-cache';
+import { getChunkCache, setCachedChunk } from './chunk-cache.ts';
+import { assembleTranslation, createTranslationPlan, parseTranslationResponse, SYSTEM_PROMPT } from './translation-plan.ts';
+import type { TranslationChunk, TranslationInput } from './translation-plan.ts';
+import type { JsonStore } from './json-store.ts';
+import { API_BASE_URL, MODEL_NAME, modelProfile } from './model-config.ts';
+export { MODEL_NAME } from './model-config.ts';
+export type { TranslationInput } from './translation-plan.ts';
 
-// MiniMax Anthropic 兼容 API 配置
-const API_BASE_URL = process.env.API_BASE_URL || process.env.ANTHROPIC_BASE_URL || 'https://api.minimaxi.com/anthropic';
-const API_KEY = process.env.API_KEY || process.env.ANTHROPIC_API_KEY;
-
-// 官方 Anthropic 用 x-api-key（apiKey），第三方兼容端点（MiniMax/Zenmux 等）用 Authorization: Bearer（authToken）
-const isOfficialAnthropic = /(^|\.)anthropic\.com$/i.test(new URL(API_BASE_URL).hostname);
-const anthropic = new Anthropic({
-  ...(isOfficialAnthropic ? { apiKey: API_KEY } : { authToken: API_KEY }),
-  baseURL: API_BASE_URL,
-});
-
-const MODEL_NAME = process.env.MODEL_NAME || 'MiniMax-M2.7';
-
-// 上下文窗口 204,800 tokens 下的预算分配
-const INPUT_BUDGET_PER_CALL = 140_000;
-const SINGLE_CHUNK_LIMIT = 50_000;
-const OUTPUT_MAX = 50_000;
-// 并发 10 → 单批 10 篇文章一轮跑完（2 × 100s 两轮容易撞 cron deadline）
-const CONCURRENCY = 10;
-// MiniMax-M2.7 实测吞吐 ~30 tok/s；单文章 5K 字符约 30s，3 文章合批要 90s+ 触发 abort。
-// 改为单文章一批，让 CONCURRENCY 承担并行度；per-call 180s 兜住 15K 截断后的长文（100s 实测会撞 abort），
-// 万一仍不够由 220s translateBatch deadline 统一 abort。
-const MAX_ITEMS_PER_BATCH = 1;
-const API_CALL_TIMEOUT_MS = 180_000;
-const MAX_RETRIES = 3;
-const RETRY_DELAYS_MS = [500, 1500, 4000];
-
-export interface TranslationResult {
-  translatedTitle: string;
-  translatedContent: string;
+export interface TranslationResult { translatedTitle: string; translatedContent: string }
+export interface Usage { calls: number; cacheHits: number; inputTokens: number; outputTokens: number }
+export type ChunkProvider = (chunk: TranslationChunk, signal: AbortSignal) => Promise<{
+  texts: Record<string, string>; inputTokens: number; outputTokens: number;
+}>;
+export interface ArticleProgress {
+  complete: boolean;
+  completedChunks: number;
+  totalChunks: number;
+  version: string;
+  usage: Usage;
+  result?: TranslationResult;
+  error?: string;
+  errorCode?: string;
 }
 
-export interface TranslationInput {
-  id: string;
-  title: string;
-  content: string;
-  link?: string;
-}
+let client: Anthropic | undefined;
 
-interface Chunk extends TranslationInput {
-  originalId: string;
-  chunkIndex: number;
-  chunkTotal: number;
-  contentHash: string; // 用于 chunk-cache 的 key 之一
-}
+export const defaultProvider: ChunkProvider = async (chunk, signal) => {
+  const key = process.env.API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!key) throw new Error('Translation API credentials are missing');
+  const official = /(^|\.)anthropic\.com$/i.test(new URL(API_BASE_URL).hostname);
+  client ??= new Anthropic({ ...(official ? { apiKey: key } : { authToken: key }),
+    baseURL: API_BASE_URL, maxRetries: 0 });
+  const profile = modelProfile();
+  // MiniMax's documented extension is structurally passed through the SDK.
+  const message = await client.messages.create({
+    ...(profile.output_config ? { output_config: profile.output_config } : {}),
+    model: MODEL_NAME, max_tokens: profile.maxOutputTokens, system: SYSTEM_PROMPT,
+    tools: [{ name: 'submit_translation', description: 'Submit complete translations for every input fragment.',
+      input_schema: { type: 'object', required: ['translations'], additionalProperties: false,
+        properties: { translations: { type: 'array', minItems: chunk.units.length, maxItems: chunk.units.length,
+          items: { type: 'object', required: ['id', 'text'], additionalProperties: false,
+            properties: { id: { type: 'string', enum: chunk.units.map(u => u.id) }, text: { type: 'string', minLength: 1 } } } } } } }],
+    tool_choice: { type: 'tool', name: 'submit_translation' },
+    messages: [{ role: 'user', content: JSON.stringify({ fragments: chunk.units.map(({ id, text }) => ({ id, text })) }) }],
+  }, { signal });
+  if (message.stop_reason !== 'tool_use') throw new Error(`Incomplete model output: ${message.stop_reason}`);
+  const submissions = message.content.filter(block => block.type === 'tool_use' && block.name === 'submit_translation');
+  if (submissions.length !== 1 || submissions[0].type !== 'tool_use') throw new Error('Expected one translation submission');
+  const text = JSON.stringify(submissions[0].input);
+  const usage = message.usage as typeof message.usage & {
+    cache_read_input_tokens?: number; cache_creation_input_tokens?: number;
+  };
+  return { texts: parseTranslationResponse(text, chunk), inputTokens: message.usage.input_tokens +
+    (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0),
+    outputTokens: message.usage.output_tokens };
+};
 
-// 粗略 token 估算：ASCII 约 3 字符/token，非 ASCII（CJK 等）约 1 字符/1.2 token
-// 保守偏大，触发切分更早
-function estimateTokens(text: string): number {
-  let ascii = 0;
-  let other = 0;
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) < 128) ascii++;
-    else other++;
-  }
-  return Math.ceil(ascii / 3 + other * 1.2);
-}
-
-// HTML-safe 切片：按块级标签 / 段落边界拆分，保持标签完整
-const BLOCK_BOUNDARY_RE = /(<\/(?:p|h[1-6]|li|ul|ol|pre|blockquote|div|section|article|table|tr)>|<br\s*\/?>|\n{2,})/gi;
-
-function splitByBoundary(content: string, maxTokens: number, re: RegExp): string[] {
-  const segments: string[] = [];
-  let lastIdx = 0;
-  for (const m of content.matchAll(re)) {
-    const end = m.index! + m[0].length;
-    segments.push(content.slice(lastIdx, end));
-    lastIdx = end;
-  }
-  if (lastIdx < content.length) segments.push(content.slice(lastIdx));
-
-  const parts: string[] = [];
-  let current = '';
-  for (const seg of segments) {
-    if (current && estimateTokens(current + seg) > maxTokens) {
-      parts.push(current);
-      current = seg;
-    } else {
-      current += seg;
+export async function translateArticle(input: TranslationInput, options: {
+  deadline?: number; maxChunks?: number; budget?: { remaining: number };
+  store?: JsonStore; provider?: ChunkProvider;
+} = {}): Promise<ArticleProgress> {
+  const plan = createTranslationPlan(input);
+  const deadline = options.deadline ?? Date.now() + 220_000;
+  const provider = options.provider ?? defaultProvider;
+  const usage: Usage = { calls: 0, cacheHits: 0, inputTokens: 0, outputTokens: 0 };
+  const texts: Record<string, string> = {};
+  const cache = await getChunkCache(input.id, plan.version, options.store);
+  let completedChunks = 0;
+  let launched = 0;
+  let failure: { error?: string; errorCode?: string } = {};
+  // Continue looking up cached chunks even after the launch budget is exhausted,
+  // so progress and completion remain correct when resuming a very long article.
+  for (const chunk of plan.chunks) {
+    if (Date.now() >= deadline - 5000) break;
+    const cached = cache[`${chunk.index}-${chunk.hash}`];
+    if (cached) {
+      Object.assign(texts, cached.texts); completedChunks++; usage.cacheHits++; continue;
     }
-  }
-  if (current) parts.push(current);
-  return parts;
-}
-
-function splitByCharCount(text: string, maxTokens: number): string[] {
-  const approxChars = maxTokens * 2;
-  const parts: string[] = [];
-  for (let i = 0; i < text.length; i += approxChars) {
-    parts.push(text.slice(i, i + approxChars));
-  }
-  return parts;
-}
-
-function splitArticle(content: string, maxTokens: number): string[] {
-  if (estimateTokens(content) <= maxTokens) return [content];
-
-  const blockParts = splitByBoundary(content, maxTokens, BLOCK_BOUNDARY_RE);
-  const result: string[] = [];
-  for (const p of blockParts) {
-    if (estimateTokens(p) <= maxTokens) {
-      result.push(p);
-      continue;
-    }
-    // 回落 1：按句末标点
-    const sentenceRe = /([.!?。！？]+[\s"'」』）)])/g;
-    const sentenceParts = splitByBoundary(p, maxTokens, sentenceRe);
-    for (const sp of sentenceParts) {
-      if (estimateTokens(sp) <= maxTokens) {
-        result.push(sp);
-      } else {
-        // 回落 2：按字符硬切（罕见：单句超 50K token）
-        result.push(...splitByCharCount(sp, maxTokens));
-      }
-    }
-  }
-  return result;
-}
-
-// 按 token 预算贪心打包；同时受 MAX_ITEMS_PER_BATCH 上限约束，避免单次调用挂得太久
-function packBatches(chunks: Chunk[], budget: number): Chunk[][] {
-  const batches: Chunk[][] = [];
-  let current: Chunk[] = [];
-  let currentTokens = 0;
-  for (const c of chunks) {
-    const t = estimateTokens(c.title) + estimateTokens(c.content);
-    const overBudget = currentTokens + t > budget;
-    const overItemCap = current.length >= MAX_ITEMS_PER_BATCH;
-    if (current.length > 0 && (overBudget || overItemCap)) {
-      batches.push(current);
-      current = [];
-      currentTokens = 0;
-    }
-    current.push(c);
-    currentTokens += t;
-  }
-  if (current.length > 0) batches.push(current);
-  return batches;
-}
-
-// 并发控制（池式 worker）
-async function runWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (true) {
-      const i = next++;
-      if (i >= items.length) return;
-      results[i] = await fn(items[i], i);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
-// 指数退避 + 抖动，仅对 429/5xx 重试
-async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
-  let lastErr: unknown;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (launched >= (options.maxChunks ?? 2) || (options.budget && options.budget.remaining <= 0)) continue;
+    launched++;
     try {
-      return await fn();
-    } catch (e) {
-      lastErr = e;
-      const status = (e as { status?: number })?.status;
-      const retriable = status === 429 || status === 529 || (typeof status === 'number' && status >= 500);
-      if (attempt === MAX_RETRIES || !retriable) throw e;
-      const base = RETRY_DELAYS_MS[attempt];
-      const wait = Math.round(base * (0.7 + Math.random() * 0.6));
-      console.warn(`[${label}] ${status} — retry ${attempt + 1}/${MAX_RETRIES} after ${wait}ms`);
-      await new Promise((r) => setTimeout(r, wait));
-    }
-  }
-  throw lastErr;
-}
-
-// 从响应文本中按分隔符提取翻译结果
-function parseDelimiterResponse(
-  responseText: string,
-  items: TranslationInput[],
-): Map<string, TranslationResult> {
-  const resultMap = new Map<string, TranslationResult>();
-  for (let i = 0; i < items.length; i++) {
-    const tag = `ARTICLE_${i + 1}`;
-    const titleMatch = responseText.match(new RegExp(`<${tag}_TITLE>\\s*([\\s\\S]*?)\\s*</${tag}_TITLE>`));
-    const contentMatch = responseText.match(new RegExp(`<${tag}_CONTENT>\\s*([\\s\\S]*?)\\s*</${tag}_CONTENT>`));
-    if (titleMatch && contentMatch) {
-      resultMap.set(items[i].id, {
-        translatedTitle: titleMatch[1].trim(),
-        translatedContent: contentMatch[1].trim(),
-      });
-    } else {
-      console.warn(`Failed to parse translation for article ${i + 1} (${items[i].id})`);
-    }
-  }
-  return resultMap;
-}
-
-const SYSTEM_PROMPT = `你是一位专业的英中翻译。请遵循以下规则：
-- 翻译 RSS 文章的标题和正文为中文
-- 保持原文的 HTML 标签和结构不变
-- 代码块、命令行、变量名保持原文不翻译
-- 技术术语首次出现时使用"中文（English）"格式，后续直接使用中文
-- URL 和链接地址保持原文不变
-- 图片的 alt 文本需要翻译
-- 译文应自然流畅，不要翻译腔`;
-
-async function translateSingleBatch(
-  batch: Chunk[],
-  batchId: number,
-  externalSignal?: AbortSignal,
-): Promise<Map<string, TranslationResult>> {
-  if (batch.length === 0) return new Map();
-
-  const articlesText = batch
-    .map((item, idx) => `---文章${idx + 1}---\n标题: ${item.title}\n内容: ${item.content}`)
-    .join('\n\n');
-
-  const formatExample = batch
-    .map((_, idx) => {
-      const tag = `ARTICLE_${idx + 1}`;
-      return `<${tag}_TITLE>\n翻译后的标题\n</${tag}_TITLE>\n<${tag}_CONTENT>\n翻译后的内容\n</${tag}_CONTENT>`;
-    })
-    .join('\n');
-
-  const prompt = `将以下${batch.length}篇RSS文章翻译成中文。保持原文的HTML格式，翻译要自然流畅。
-
-${articlesText}
-
-请严格按以下格式返回每篇文章的翻译结果：
-${formatExample}`;
-
-  const inputTokens = estimateTokens(prompt) + estimateTokens(SYSTEM_PROMPT);
-  const maxTokens = Math.min(Math.ceil(inputTokens * 1.2) + 500, OUTPUT_MAX);
-  const label = `batch ${batchId}`;
-
-  try {
-    const message = await withRetry(async () => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), API_CALL_TIMEOUT_MS);
-      // cron 总 deadline 到时也立刻 abort 在飞调用，避免函数 invocation timeout
-      const onExternalAbort = () => controller.abort();
-      externalSignal?.addEventListener('abort', onExternalAbort);
-      try {
-        return await anthropic.messages.create(
-          {
-            model: MODEL_NAME,
-            max_tokens: maxTokens,
-            system: SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: prompt }],
-          },
-          { signal: controller.signal },
-        );
-      } finally {
-        clearTimeout(timer);
-        externalSignal?.removeEventListener('abort', onExternalAbort);
-      }
-    }, label);
-
-    const textBlock = message.content.find((b) => b.type === 'text');
-    const responseText = textBlock && 'text' in textBlock ? textBlock.text : '';
-    console.log(`[${label}] ok — ${batch.length} items, input≈${inputTokens} tok, max_out=${maxTokens}`);
-    return parseDelimiterResponse(responseText, batch);
-  } catch (e) {
-    console.error(`[${label}] failed:`, e);
-    return new Map();
-  }
-}
-
-export async function translateBatch(
-  items: TranslationInput[],
-  deadline?: number,
-): Promise<Map<string, TranslationResult>> {
-  if (items.length === 0) return new Map();
-
-  // 1. 单篇切片（长文 → 多 chunk）
-  const chunks: Chunk[] = [];
-  for (const item of items) {
-    const tokens = estimateTokens(item.content);
-    if (tokens <= SINGLE_CHUNK_LIMIT) {
-      chunks.push({
-        ...item,
-        originalId: item.id,
-        chunkIndex: 0,
-        chunkTotal: 1,
-        contentHash: hashChunkContent(item.content),
-      });
-      continue;
-    }
-    const parts = splitArticle(item.content, SINGLE_CHUNK_LIMIT);
-    console.log(`Article ${item.id} split into ${parts.length} chunks (≈${tokens} tok)`);
-    parts.forEach((part, idx) => {
-      chunks.push({
-        id: `${item.id}#${idx}`,
-        originalId: item.id,
-        chunkIndex: idx,
-        chunkTotal: parts.length,
-        title: idx === 0 ? item.title : `[PART ${idx + 1}/${parts.length}]`,
-        content: part,
-        link: item.link,
-        contentHash: hashChunkContent(part),
-      });
-    });
-  }
-
-  // 2. chunk-cache 预查：同 (guid, chunkIndex, contentHash) 已有成功结果就直接复用
-  const chunkResults = new Map<string, TranslationResult>();
-  const chunksToTranslate: Chunk[] = [];
-  const cacheLookups = await Promise.all(
-    chunks.map(async (c) => ({
-      chunk: c,
-      hit: await getCachedChunk(c.originalId, c.chunkIndex, c.contentHash),
-    })),
-  );
-  for (const { chunk, hit } of cacheLookups) {
-    if (hit) {
-      chunkResults.set(chunk.id, {
-        translatedTitle: hit.translatedTitle,
-        translatedContent: hit.translatedContent,
-      });
-    } else {
-      chunksToTranslate.push(chunk);
-    }
-  }
-  const cacheHits = chunks.length - chunksToTranslate.length;
-  if (cacheHits > 0) console.log(`chunk-cache hit ${cacheHits}/${chunks.length}`);
-
-  // 3. 动态打包未命中的 chunks
-  const batches = packBatches(chunksToTranslate, INPUT_BUDGET_PER_CALL);
-  console.log(
-    `Translating ${items.length} article(s), ${chunksToTranslate.length} chunk(s) → ${batches.length} batch(es), concurrency=${CONCURRENCY}`,
-  );
-
-  // 4. 并发执行各批次；deadline 到时统一 abort 在飞调用
-  const tasks = batches.map((batch, i) => ({ batch, batchId: i }));
-  const deadlineCtrl = new AbortController();
-  const deadlineTimer = deadline
-    ? setTimeout(() => {
-        console.warn('translateBatch deadline reached, aborting in-flight calls');
-        deadlineCtrl.abort();
-      }, Math.max(0, deadline - Date.now()))
-    : null;
-  try {
-    await runWithConcurrency(tasks, CONCURRENCY, async ({ batch, batchId }) => {
-      if (deadline && Date.now() > deadline) {
-        console.warn(`[batch ${batchId}] deadline reached, skipping`);
-        return;
-      }
-      const results = await translateSingleBatch(batch, batchId, deadlineCtrl.signal);
-      results.forEach((r, id) => chunkResults.set(id, r));
-      // 成功的 chunk 写回缓存；后续 cron 里同样内容不再发调用
-      const writes: Promise<void>[] = [];
-      for (const chunk of batch) {
-        const r = results.get(chunk.id);
-        if (r) {
-          writes.push(
-            setCachedChunk(chunk.originalId, chunk.chunkIndex, chunk.contentHash, r),
-          );
+      let result: Awaited<ReturnType<ChunkProvider>> | undefined;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const remaining = deadline - Date.now() - 5000;
+        if (remaining <= 0) break;
+        const signal = AbortSignal.timeout(Math.min(modelProfile().timeoutMs, remaining));
+        if (options.budget && options.budget.remaining <= 0) break;
+        if (options.budget) options.budget.remaining--;
+        usage.calls++;
+        try { result = await provider(chunk, signal); break; }
+        catch (error) {
+          const status = (error as { status?: number }).status;
+          if (attempt || !(status === 429 || (status && status >= 500)) || remaining < 10_000) throw error;
+          await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
         }
       }
-      await Promise.all(writes);
-    });
-  } finally {
-    if (deadlineTimer) clearTimeout(deadlineTimer);
-  }
-
-  // 5. 按原文章 id 合并 chunks（含 cache hit 的部分）
-  const final = new Map<string, TranslationResult>();
-  for (const item of items) {
-    const itemChunks = chunks
-      .filter((c) => c.originalId === item.id)
-      .sort((a, b) => a.chunkIndex - b.chunkIndex);
-    const parts: string[] = [];
-    let title = '';
-    let complete = true;
-    for (const c of itemChunks) {
-      const r = chunkResults.get(c.id);
-      if (!r) {
-        complete = false;
-        break;
-      }
-      if (c.chunkIndex === 0) title = r.translatedTitle;
-      parts.push(r.translatedContent);
-    }
-    if (complete) {
-      final.set(item.id, { translatedTitle: title, translatedContent: parts.join('') });
+      if (!result) break;
+      // Validate even injected/test providers before persisting or publishing.
+      for (const unit of chunk.units) if (!result.texts[unit.id]?.trim()) throw new Error(`Missing translation: ${unit.id}`);
+      usage.inputTokens += result.inputTokens;
+      usage.outputTokens += result.outputTokens;
+      await setCachedChunk(input.id, plan.version, chunk.index, chunk.hash,
+        { ...result, cachedAt: new Date().toISOString() }, options.store);
+      Object.assign(texts, result.texts); completedChunks++;
+    } catch (error) {
+      if (Date.now() >= deadline - 5000) break;
+      failure = { error: error instanceof Error ? error.message.slice(0, 300) : 'Translation failed',
+        errorCode: String((error as { status?: number }).status || (error as { name?: string }).name || 'translation_error') };
+      break;
     }
   }
-
-  console.log(`Successfully translated ${final.size}/${items.length} articles`);
-  return final;
+  const complete = completedChunks === plan.chunks.length;
+  return { complete, completedChunks, totalChunks: plan.chunks.length, version: plan.version, usage,
+    ...(complete ? { result: assembleTranslation(input, plan, texts) } : failure) };
 }
 
-export const _internals = { estimateTokens, splitArticle, packBatches };
-
-// 单篇翻译（保留作为备用）
-export async function translateContent(
-  title: string,
-  content: string,
-): Promise<TranslationResult> {
-  const results = await translateBatch([{ id: '0', title, content }]);
-  return results.get('0') || { translatedTitle: title, translatedContent: content };
+export async function translateBatch(items: TranslationInput[], deadline?: number) {
+  const results = new Map<string, TranslationResult>();
+  for (const item of items) {
+    const progress = await translateArticle(item, { deadline, maxChunks: Infinity });
+    if (progress.result) results.set(item.id, progress.result);
+  }
+  return results;
 }
