@@ -17,6 +17,7 @@ export interface ArticleJob {
   stage: JobStage; profile: string; createdAt: string; updatedAt: string; lastAttemptAt?: string;
   retryAt?: string; failures: number; completedChunks: number; totalChunks: number;
   preparedContent?: string; result?: TranslatedItem; error?: JobError; usage: Usage;
+  preparedUrl?: string;
 }
 export interface JobSummary {
   id: string; feedId: string; title: string; stage: JobStage; createdAt: string; updatedAt: string;
@@ -114,11 +115,17 @@ export async function processJob(id: string, batch: number, deadline: number, bu
     if (!job.preparedContent) {
       stage = 'fetch';
       let content = job.item.content;
-      if (needsFetch(content)) {
+      // Atom content and content:encoded are full posts regardless of length.
+      // Older Daring Fireball jobs predate that flag; their author permalink
+      // identifies a complete link-blog post, not the external linked article.
+      const fullPost = job.item.contentIsFull || (job.feed.id === 'daringfireball-net' &&
+        /https:\/\/daringfireball\.net\/linked\//.test(content));
+      if (!fullPost && needsFetch(content)) {
         const fetched = await (dependencies.extract || fetchArticleContent)(job.item.link,
-          AbortSignal.timeout(Math.max(1, Math.min(15_000, deadline - Date.now()))));
+          AbortSignal.timeout(Math.max(1, Math.min(15_000, deadline - Date.now()))), content);
         if (fetched.attempted && !fetched.content) throw new Error(fetched.error || 'Full article extraction failed');
         if (fetched.content) content = fetched.content;
+        if (fetched.url) job.preparedUrl = fetched.url;
       }
       job.preparedContent = content;
       job.stage = 'translate';
@@ -138,7 +145,7 @@ export async function processJob(id: string, batch: number, deadline: number, bu
       if (progress.result) {
         job.result = {
           guid: job.item.guid, originalTitle: job.item.title, originalContent: job.preparedContent!,
-          ...progress.result, link: job.item.link, pubDate: job.item.pubDate,
+          ...progress.result, link: job.preparedUrl || job.item.link, pubDate: job.item.pubDate,
           author: job.item.author, categories: job.item.categories,
           translatedAt: new Date().toISOString(), translated: true, translationComplete: true,
           translationVersion: progress.version, translationProfile: activeProfile(), sourceVersion: job.inputVersion,
@@ -179,6 +186,9 @@ export async function processJob(id: string, batch: number, deadline: number, bu
     job.failures++;
     job.updatedAt = new Date().toISOString();
     job.retryAt = new Date(Date.now() + Math.min(24 * 3600_000, 15 * 60_000 * 2 ** Math.min(job.failures - 1, 7))).toISOString();
+    if ((error as { code?: string }).code === 'provider_content_policy') {
+      job.retryAt = new Date(Date.now() + 24 * 3600_000).toISOString();
+    }
     job.error = { stage, code: String((error as { code?: string }).code || (error as { name?: string }).name || 'error'),
       message: error instanceof Error ? error.message.slice(0, 300) : 'Job failed', at: job.updatedAt };
     await lease.assertOwned();

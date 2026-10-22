@@ -7,6 +7,7 @@ export interface ParsedItem {
   link: string;
   content: string;
   contentSnippet?: string;
+  contentIsFull?: boolean;
   pubDate: string;
   author?: string;
   categories?: string[];
@@ -36,6 +37,7 @@ async function parseFeedInner(feedUrl: string): Promise<ParsedFeed> {
   const xml = await response.text();
   if (xml.length > 10_000_000) throw new Error('RSS exceeds 10 MB limit');
   const feed = await parser.parseString(xml);
+  const atom = /<feed[\s>]/i.test(xml);
 
   return {
     title: feed.title || 'Untitled Feed',
@@ -53,6 +55,7 @@ async function parseFeedInner(feedUrl: string): Promise<ParsedFeed> {
         title,
         link,
         content,
+        contentIsFull: !!item['content:encoded'] || (atom && !!item.content),
         contentSnippet: item.contentSnippet,
         pubDate,
         author: item.creator || item.author,

@@ -49,6 +49,21 @@ test('reject incomplete, duplicate and empty model responses', () => {
   assert.throws(() => parseTranslationResponse('{"translations":[{"id":"title","text":"好"},{"id":"title","text":"好"}]}', chunk));
 });
 
+test('numeric IDs match only exact expected integers and cannot conceal duplicates', () => {
+  const chunk = createTranslationPlan({ id: 'ids', title: 'Title', content: '<p>Hello</p>' }).chunks[0];
+  assert.deepEqual(parseTranslationResponse(JSON.stringify({ translations: [
+    { id: 'title', text: '标题' }, { id: 1, text: '你好' },
+  ] }), chunk), { title: '标题', '1': '你好' });
+  for (const id of [1.1, null, {}, '01', 9007199254740992]) {
+    assert.throws(() => parseTranslationResponse(JSON.stringify({ translations: [
+      { id: 'title', text: '标题' }, { id, text: '你好' },
+    ] }), chunk));
+  }
+  assert.throws(() => parseTranslationResponse(JSON.stringify({ translations: [
+    { id: 'title', text: '标题' }, { id: 1, text: '你好' }, { id: '1', text: '重复' },
+  ] }), chunk), /Duplicate/);
+});
+
 test('dense inline markup has bounded fragment count without losing any source text', () => {
   const input = { id: 'inline', title: 'Links', content: '<p>' +
     Array.from({ length: 180 }, (_, i) => `Some <a href="/${i}">linked words ${i}</a> between links. `).join('') + '</p>' };
@@ -84,4 +99,17 @@ test('expired deadline performs no provider calls', async () => {
   });
   assert.equal(progress.complete, false);
   assert.equal(progress.usage.calls, 0);
+});
+
+test('provider policy rejection wrapped in HTTP 500 is classified and never immediately retried', async () => {
+  let calls = 0;
+  const progress = await translateArticle({ id: 'policy', title: 'Title', content: '<p>Original article.</p>' }, {
+    store: memoryStore(), provider: async () => {
+      calls++;
+      throw Object.assign(new Error('500 input new_sensitive (1026)'), { status: 500 });
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(progress.errorCode, 'provider_content_policy');
+  assert.equal(progress.result, undefined);
 });

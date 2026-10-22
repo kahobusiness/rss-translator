@@ -118,15 +118,20 @@ export function assembleTranslation(input: TranslationInput, plan: TranslationPl
 
 export function parseTranslationResponse(text: string, chunk: TranslationChunk): Record<string, string> {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  const data = JSON.parse(cleaned) as { translations: { id: string; text: string }[] };
+  const data = JSON.parse(cleaned) as { translations: { id: unknown; text: unknown }[] };
   if (!Array.isArray(data.translations)) throw new Error('Missing translations array');
   const expected = new Set(chunk.units.map(u => u.id));
   const out: Record<string, string> = {};
   for (const row of data.translations) {
-    if (!expected.has(row.id) || row.id in out || typeof row.text !== 'string' || !row.text.trim()) {
-      throw new Error('Invalid, duplicate or unexpected translation unit');
-    }
-    out[row.id] = row.text;
+    if (!row || typeof row !== 'object') throw new Error('Invalid translation row');
+    // Some compatible providers emit JSON numbers despite the string schema.
+    // Accept only an exact canonical integer ID from this chunk. Never infer
+    // IDs by response position or accept rounded, duplicate or missing IDs.
+    const id = typeof row.id === 'number' && Number.isSafeInteger(row.id) ? String(row.id) : row.id;
+    if (typeof id !== 'string' || !expected.has(id)) throw new Error(`Unexpected translation unit ID: ${String(row.id).slice(0, 50)}`);
+    if (Object.hasOwn(out, id)) throw new Error(`Duplicate translation unit ID: ${id}`);
+    if (typeof row.text !== 'string' || !row.text.trim()) throw new Error(`Empty translation unit: ${id}`);
+    out[id] = row.text;
   }
   if (Object.keys(out).length !== expected.size) throw new Error('Incomplete translation response');
   return out;

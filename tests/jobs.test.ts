@@ -59,6 +59,20 @@ test('extraction failure remains retryable and never publishes a snippet', async
   assert.equal((await store.read<ArticleJob>(jobKey(queued.id)))!.value.result, undefined);
 });
 
+test('short full posts and legacy link-blog posts never fetch the external destination', async () => {
+  for (const [source, contentIsFull] of [[feed, true], [{ ...feed, id: 'daringfireball-net' }, undefined]] as const) {
+    const store = memoryStore();
+    const content = '<p>A complete short post.</p><a href="https://daringfireball.net/linked/2026/10/post">★</a>';
+    const queued = await enqueueJob(newJob(source, { ...item, content, contentIsFull }, { feedTitle: 'Example' }), store);
+    let published = 0;
+    const result = await processJob(queued.id, 0, Date.now() + 30_000, { remaining: 8 }, { store, provider,
+      extract: async () => { throw new Error('must not fetch the linked site'); },
+      publish: async (_job, result) => { published++; assert.equal(result.originalContent, content); } });
+    assert.equal(result.summary?.stage, 'complete');
+    assert.equal(published, 1);
+  }
+});
+
 test('cron and operational status fail closed without credentials', async () => {
   const previous = process.env.CRON_SECRET;
   delete process.env.CRON_SECRET;

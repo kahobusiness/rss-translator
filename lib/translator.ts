@@ -25,6 +25,10 @@ export interface ArticleProgress {
 
 let client: Anthropic | undefined;
 
+export function isContentPolicyError(error: unknown): boolean {
+  return error instanceof Error && /(?:input|output) new_sensitive\s*\(102[67]\)/i.test(error.message);
+}
+
 export const defaultProvider: ChunkProvider = async (chunk, signal) => {
   const key = process.env.API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!key) throw new Error('Translation API credentials are missing');
@@ -91,7 +95,9 @@ export async function translateArticle(input: TranslationInput, options: {
         try { result = await provider(chunk, signal); break; }
         catch (error) {
           const status = (error as { status?: number }).status;
-          if (attempt || !(status === 429 || (status && status >= 500)) || remaining < 10_000) throw error;
+          // MiniMax wraps deterministic content-policy rejections in HTTP 500.
+          // Repeating unchanged input immediately cannot repair these failures.
+          if (isContentPolicyError(error) || attempt || !(status === 429 || (status && status >= 500)) || remaining < 10_000) throw error;
           await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
         }
       }
@@ -106,7 +112,8 @@ export async function translateArticle(input: TranslationInput, options: {
     } catch (error) {
       if (Date.now() >= deadline - 5000) break;
       failure = { error: error instanceof Error ? error.message.slice(0, 300) : 'Translation failed',
-        errorCode: String((error as { status?: number }).status || (error as { name?: string }).name || 'translation_error') };
+        errorCode: isContentPolicyError(error) ? 'provider_content_policy' :
+          String((error as { status?: number }).status || (error as { name?: string }).name || 'translation_error') };
       break;
     }
   }

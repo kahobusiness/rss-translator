@@ -10,6 +10,8 @@ test('prefer full encoded content; missing dates and identifiers stay stable acr
   const first = await parseFeed('https://example.com/rss');
   const second = await parseFeed('https://example.com/rss');
   assert.equal(first.items[0].content, '<p>Full original body</p>');
+  assert.equal(first.items[0].contentIsFull, true);
+  assert.equal(first.items[1].contentIsFull, false);
   assert.deepEqual(first.items, second.items);
   assert.equal(first.items[0].pubDate, '1970-01-01T00:00:00.000Z');
   assert.notEqual(first.items[0].guid, first.items[1].guid);
