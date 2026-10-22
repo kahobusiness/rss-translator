@@ -60,9 +60,13 @@ export const defaultProvider: ChunkProvider = async (chunk, signal) => {
   const usage = message.usage as typeof message.usage & {
     cache_read_input_tokens?: number; cache_creation_input_tokens?: number;
   };
-  return { texts: parseTranslationResponse(text, chunk), inputTokens: message.usage.input_tokens +
-    (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0),
-    outputTokens: message.usage.output_tokens };
+  const inputTokens = message.usage.input_tokens + (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
+  try {
+    return { texts: parseTranslationResponse(text, chunk), inputTokens, outputTokens: message.usage.output_tokens };
+  } catch (error) {
+    throw Object.assign(error instanceof Error ? error : new Error('Invalid model response'),
+      { code: 'model_response_invalid', inputTokens, outputTokens: message.usage.output_tokens });
+  }
 };
 
 export async function translateArticle(input: TranslationInput, options: {
@@ -100,9 +104,12 @@ export async function translateArticle(input: TranslationInput, options: {
         try { result = await provider(chunk, signal); break; }
         catch (error) {
           const status = (error as { status?: number }).status;
+          const invalid = (error as { code?: string }).code === 'model_response_invalid';
+          usage.inputTokens += (error as { inputTokens?: number }).inputTokens || 0;
+          usage.outputTokens += (error as { outputTokens?: number }).outputTokens || 0;
           // MiniMax wraps deterministic content-policy rejections in HTTP 500.
           // Repeating unchanged input immediately cannot repair these failures.
-          if (isContentPolicyError(error) || attempt || !(status === 429 || (status && status >= 500)) || remaining < 10_000) throw error;
+          if (isContentPolicyError(error) || attempt || !(invalid || status === 429 || (status && status >= 500)) || remaining < 10_000) throw error;
           await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
         }
       }
@@ -118,7 +125,7 @@ export async function translateArticle(input: TranslationInput, options: {
       if (Date.now() >= deadline - 5000) break;
       failure = { error: error instanceof Error ? error.message.slice(0, 300) : 'Translation failed',
         errorCode: isContentPolicyError(error) ? 'provider_content_policy' :
-          String((error as { status?: number }).status || (error as { name?: string }).name || 'translation_error') };
+          String((error as { code?: string }).code || (error as { status?: number }).status || (error as { name?: string }).name || 'translation_error') };
       break;
     }
   }

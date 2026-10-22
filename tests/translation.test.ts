@@ -142,3 +142,17 @@ test('provider policy rejection wrapped in HTTP 500 is classified and never imme
   assert.equal(progress.errorCode, 'provider_content_policy');
   assert.equal(progress.result, undefined);
 });
+
+test('invalid model submissions get one budgeted retry with token accounting', async () => {
+  let calls = 0;
+  const progress = await translateArticle({ id: 'validation-retry', title: 'Title', content: '<p>Hello</p>' }, {
+    store: memoryStore(), budget: { remaining: 2 }, provider: async chunk => {
+      calls++;
+      if (calls === 1) throw Object.assign(new Error('Empty translation unit: 1'),
+        { code: 'model_response_invalid', inputTokens: 12, outputTokens: 8 });
+      return { texts: Object.fromEntries(chunk.units.map(u => [u.id, `译文 ${u.text}`])), inputTokens: 10, outputTokens: 10 };
+    },
+  });
+  assert.equal(progress.complete, true);
+  assert.deepEqual(progress.usage, { calls: 2, cacheHits: 0, inputTokens: 22, outputTokens: 18 });
+});
