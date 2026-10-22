@@ -56,6 +56,10 @@ RSS 原生正文优先于摘要。缺失或无效发布时间使用稳定占位�
 
 私有存储应与项目连接。不要用公开 CDN 读取来实现锁或队列即时状态。订阅地址优先使用 `SITE_URL`，其次使用稳定生产域名或请求来源，绝不使用部署专属的 `VERCEL_URL`。
 
+Vercel 中的 `API_KEY`、`CRON_SECRET`、`BLOB_READ_WRITE_TOKEN` 和 `RSS_STATE_READ_WRITE_TOKEN` 使用 **Secret** 类型；新增的存储令牌或 `GITHUB_TOKEN` 也应使用 Secret。普通地址、模型名称及 store ID 使用 Config。Secret 保存后无法从控制台或 API 取回明文，运行中的部署仍可正常使用。类型转换不等于轮换密钥；修改部署配置后需新建部署才能应用。
+
+GitHub 默认分支和 Vercel 生产分支均为 `main`；推送到 `main` 会触发生产部署。
+
 ## API 和监控
 
 | 端点 | 用途 |
