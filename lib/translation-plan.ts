@@ -105,9 +105,16 @@ export function createTranslationPlan(input: TranslationInput, budget = CHUNK_TO
 const escape = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
   .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+// English articles have no standalone Chinese equivalent. A text node split by
+// an inline tag may therefore legitimately translate to an empty string.
+export const allowsEmptyTranslation = (unit: Pick<TextUnit, 'id' | 'text'>) =>
+  unit.id !== 'title' && /^(?:a|an|the)$/i.test(unit.text.trim());
+export const validTranslation = (unit: Pick<TextUnit, 'id' | 'text'>, value: unknown): value is string =>
+  typeof value === 'string' && (!!value.trim() || allowsEmptyTranslation(unit));
+
 export function assembleTranslation(input: TranslationInput, plan: TranslationPlan, texts: Record<string, string>) {
   for (const unit of plan.units) {
-    if (typeof texts[unit.id] !== 'string' || !texts[unit.id].trim()) throw new Error(`Missing translation: ${unit.id}`);
+    if (!validTranslation(unit, texts[unit.id])) throw new Error(`Missing translation: ${unit.id}`);
   }
   let content = input.content;
   for (const unit of plan.units.filter(u => u.start >= 0).sort((a, b) => b.start - a.start)) {
@@ -118,11 +125,13 @@ export function assembleTranslation(input: TranslationInput, plan: TranslationPl
 
 export function parseTranslationResponse(text: string, chunk: TranslationChunk): Record<string, string> {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  const data = JSON.parse(cleaned) as { translations: { id: unknown; text: unknown }[] };
-  if (!Array.isArray(data.translations)) throw new Error('Missing translations array');
+  const data = JSON.parse(cleaned) as { translations: { id: unknown; text: unknown }[] | Record<string, unknown> };
+  if (!data || !data.translations || typeof data.translations !== 'object') throw new Error('Missing translations');
+  const rows = Array.isArray(data.translations) ? data.translations :
+    Object.entries(data.translations).map(([id, text]) => ({ id, text }));
   const expected = new Set(chunk.units.map(u => u.id));
   const out: Record<string, string> = {};
-  for (const row of data.translations) {
+  for (const row of rows) {
     if (!row || typeof row !== 'object') throw new Error('Invalid translation row');
     // Some compatible providers emit JSON numbers despite the string schema.
     // Accept only an exact canonical integer ID from this chunk. Never infer
@@ -130,7 +139,7 @@ export function parseTranslationResponse(text: string, chunk: TranslationChunk):
     const id = typeof row.id === 'number' && Number.isSafeInteger(row.id) ? String(row.id) : row.id;
     if (typeof id !== 'string' || !expected.has(id)) throw new Error(`Unexpected translation unit ID: ${String(row.id).slice(0, 50)}`);
     if (Object.hasOwn(out, id)) throw new Error(`Duplicate translation unit ID: ${id}`);
-    if (typeof row.text !== 'string' || !row.text.trim()) throw new Error(`Empty translation unit: ${id}`);
+    if (!validTranslation(chunk.units.find(u => u.id === id)!, row.text)) throw new Error(`Empty translation unit: ${id}`);
     out[id] = row.text;
   }
   if (Object.keys(out).length !== expected.size) throw new Error('Incomplete translation response');

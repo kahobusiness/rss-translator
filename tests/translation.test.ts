@@ -64,6 +64,35 @@ test('numeric IDs match only exact expected integers and cannot conceal duplicat
   ] }), chunk), /Duplicate/);
 });
 
+test('keyed submissions preserve sparse IDs and allow only standalone articles to be empty', () => {
+  const chunk = { index: 1, hash: 'test', units: [
+    { id: '48', text: 'The', start: 0, end: 3 },
+    { id: '49', text: 'SANS Internet Storm Center', start: 4, end: 30 },
+  ] };
+  const texts = parseTranslationResponse(JSON.stringify({ translations: { '49': 'SANS 互联网风暴中心', '48': '' } }), chunk);
+  assert.equal(texts['48'], '');
+  assert.equal(assembleTranslation({ id: 'test', title: 'Title', content: 'The SANS Internet Storm Center' },
+    { version: 'v1', chunks: [chunk], units: chunk.units }, texts).translatedContent, ' SANS 互联网风暴中心');
+  assert.throws(() => parseTranslationResponse(JSON.stringify({ translations: { '48': '', '49': '' } }), chunk), /Empty/);
+  assert.throws(() => parseTranslationResponse(JSON.stringify({ translations: { '48': '' } }), chunk), /Incomplete/);
+  assert.throws(() => parseTranslationResponse(JSON.stringify({ translations: { '0': '错位', '1': '错位' } }), chunk), /Unexpected/);
+  assert.throws(() => parseTranslationResponse('{"translations":{"title":""}}',
+    { ...chunk, units: [{ id: 'title', text: 'The', start: -1, end: -1 }] }), /Empty/);
+});
+
+test('empty article translations remain valid through checkpointing and cache-only resume', async () => {
+  const store = memoryStore();
+  const input = { id: 'articles', title: 'Title', content: '<p>The <a href="/a">SANS Internet Storm Center</a></p>' };
+  const provider: ChunkProvider = async chunk => ({ texts: Object.fromEntries(chunk.units.map(u =>
+    [u.id, u.text === 'The' ? '' : `译文 ${u.text}`])), inputTokens: 10, outputTokens: 10 });
+  const first = await translateArticle(input, { store, provider });
+  assert.equal(first.complete, true);
+  assert.ok(first.result!.translatedContent.includes('<a href="/a">'));
+  const cached = await translateArticle(input, { store, provider: async () => { throw new Error('must use checkpoint'); } });
+  assert.equal(cached.complete, true);
+  assert.equal(cached.usage.calls, 0);
+});
+
 test('dense inline markup has bounded fragment count without losing any source text', () => {
   const input = { id: 'inline', title: 'Links', content: '<p>' +
     Array.from({ length: 180 }, (_, i) => `Some <a href="/${i}">linked words ${i}</a> between links. `).join('') + '</p>' };

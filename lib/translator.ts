@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getChunkCache, setCachedChunk } from './chunk-cache.ts';
-import { assembleTranslation, createTranslationPlan, parseTranslationResponse, SYSTEM_PROMPT } from './translation-plan.ts';
+import { allowsEmptyTranslation, validTranslation, assembleTranslation, createTranslationPlan, parseTranslationResponse, SYSTEM_PROMPT } from './translation-plan.ts';
 import type { TranslationChunk, TranslationInput } from './translation-plan.ts';
 import type { JsonStore } from './json-store.ts';
 import { API_BASE_URL, MODEL_NAME, modelProfile } from './model-config.ts';
@@ -39,12 +39,17 @@ export const defaultProvider: ChunkProvider = async (chunk, signal) => {
   // MiniMax's documented extension is structurally passed through the SDK.
   const message = await client.messages.create({
     ...(profile.output_config ? { output_config: profile.output_config } : {}),
-    model: MODEL_NAME, max_tokens: profile.maxOutputTokens, system: SYSTEM_PROMPT,
+    model: MODEL_NAME, max_tokens: profile.maxOutputTokens,
+    // Keep the same source spans and checkpoint version: only the submission
+    // envelope changes. Required object keys prevent sequential ID renumbering.
+    system: SYSTEM_PROMPT.replace('translations 数组', 'translations 对象，键为原始 id，值为译文') +
+      '\n仅独立英文冠词 a/an/the 可译为空字符串；其他片段不得为空。必须逐一保留所有键，不得重编号。',
     tools: [{ name: 'submit_translation', description: 'Submit complete translations for every input fragment.',
       input_schema: { type: 'object', required: ['translations'], additionalProperties: false,
-        properties: { translations: { type: 'array', minItems: chunk.units.length, maxItems: chunk.units.length,
-          items: { type: 'object', required: ['id', 'text'], additionalProperties: false,
-            properties: { id: { type: 'string', enum: chunk.units.map(u => u.id) }, text: { type: 'string', minLength: 1 } } } } } } }],
+        properties: { translations: { type: 'object', additionalProperties: false,
+          required: chunk.units.map(u => u.id),
+          properties: Object.fromEntries(chunk.units.map(u => [u.id,
+            { type: 'string', minLength: allowsEmptyTranslation(u) ? 0 : 1 }])) } } } }],
     tool_choice: { type: 'tool', name: 'submit_translation' },
     messages: [{ role: 'user', content: JSON.stringify({ fragments: chunk.units.map(({ id, text }) => ({ id, text })) }) }],
   }, { signal });
@@ -103,7 +108,7 @@ export async function translateArticle(input: TranslationInput, options: {
       }
       if (!result) break;
       // Validate even injected/test providers before persisting or publishing.
-      for (const unit of chunk.units) if (!result.texts[unit.id]?.trim()) throw new Error(`Missing translation: ${unit.id}`);
+      for (const unit of chunk.units) if (!validTranslation(unit, result.texts[unit.id])) throw new Error(`Missing translation: ${unit.id}`);
       usage.inputTokens += result.inputTokens;
       usage.outputTokens += result.outputTokens;
       await setCachedChunk(input.id, plan.version, chunk.index, chunk.hash,

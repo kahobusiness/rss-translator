@@ -37,18 +37,25 @@ for (let round = 0; round < (write ? rounds : 1); round++) {
     try {
       const deadline = Date.now() + 240_000;
       const budget = { remaining: 8 };
-      for (const { job } of selected) {
-        if (Date.now() > deadline - 20_000 || (write && !budget.remaining)) break;
-        const result = write ? await processJob(job.id, batch, deadline, budget) : null;
-        if (result?.summary) {
-          await lease!.assertOwned();
-          await saveBatch(batch, { jobs: { [job.id]: result.summary } });
+      let next = 0;
+      const workers = await Promise.allSettled(Array.from({ length: write ? Math.min(4, selected.length) : 1 }, async () => {
+        while (next < selected.length) {
+          if (Date.now() > deadline - 20_000 || (write && !budget.remaining)) break;
+          const { job } = selected[next++];
+          const result = write ? await processJob(job.id, batch, deadline, budget) : null;
+          if (write && !result?.summary) continue; // Another worker owns the article; try next round.
+          if (result?.summary) {
+            await lease!.assertOwned();
+            await saveBatch(batch, { jobs: { [job.id]: result.summary } });
+          }
+          const summary = result?.summary || job;
+          console.log(JSON.stringify({ round, batch, id: job.id, stage: summary.stage,
+            completedChunks: summary.completedChunks, totalChunks: summary.totalChunks, error: summary.error, usage: result?.usage }));
+          if (summary.stage === 'complete' || (write && summary.stage === 'failed')) stopped.add(job.id);
         }
-        const summary = result?.summary || job;
-        console.log(JSON.stringify({ round, batch, id: job.id, stage: summary.stage,
-          completedChunks: summary.completedChunks, totalChunks: summary.totalChunks, error: summary.error, usage: result?.usage }));
-        if (summary.stage === 'complete' || (write && summary.stage === 'failed')) stopped.add(job.id);
-      }
+      }));
+      const failure = workers.find(worker => worker.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
     } finally { await lease?.release(); }
   }
   if (stopped.size === targets.length) break;
