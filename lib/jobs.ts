@@ -4,7 +4,7 @@ import type { JsonStore } from './json-store.ts';
 import { translateArticle } from './translator.ts';
 import type { ChunkProvider, Usage } from './translator.ts';
 import { translationVersion } from './translation-plan.ts';
-import { fetchArticleContent, needsFetch } from './article-fetcher.ts';
+import { fetchArticleContent } from './article-fetcher.ts';
 import { appendItems, saveRecentIndex } from './storage.ts';
 import type { StoredFeed, TranslatedItem } from './storage.ts';
 import type { ParsedItem } from './rss-parser.ts';
@@ -34,7 +34,9 @@ export interface BatchState {
   lastDiscoveryAt?: string; lastDiscoveryError?: string; recentRuns?: RunReport[];
   configuration?: { source: string; degraded: boolean; lastSuccessAt: string | null; error: string | null };
 }
-export const activeProfile = () => translationVersion('', '');
+// Bump when article acquisition changes so archived snippets are upgraded too.
+const CONTENT_PROFILE = 'linked-article-v1';
+export const activeProfile = () => `${CONTENT_PROFILE}:${translationVersion('', '')}`;
 export const emptyUsage = (): Usage => ({ calls: 0, cacheHits: 0, inputTokens: 0, outputTokens: 0 });
 export const addUsage = (a: Usage, b: Usage): Usage => ({ calls: a.calls + b.calls, cacheHits: a.cacheHits + b.cacheHits,
   inputTokens: a.inputTokens + b.inputTokens, outputTokens: a.outputTokens + b.outputTokens });
@@ -50,9 +52,9 @@ export function summarize(job: ArticleJob): JobSummary {
 export function needsTranslation(item: TranslatedItem | undefined) {
   if (!item || !item.translated) return true;
   if (item.translationComplete === true) return item.translationProfile !== activeProfile();
-  // Old cron truncated long originals before translation. Reconcile those
-  // historical articles too, even after they disappear from the live RSS.
-  return item.originalContent.length > 15_000;
+  // Legacy translations may contain only commentary or summaries. Reconcile
+  // archived articles too, even after they disappear from the live RSS.
+  return true;
 }
 export function due(job: JobSummary, now = Date.now()) {
   return job.stage !== 'complete' && (!job.retryAt || Date.parse(job.retryAt) <= now);
@@ -68,7 +70,8 @@ export async function enqueueJob(job: ArticleJob, store: JsonStore = jsonStore, 
   const saved = await updateJson<ArticleJob>(jobKey(job.id, batch), current => {
     if (!current) return job;
     if (current.profile !== activeProfile() || current.inputVersion !== job.inputVersion) {
-      const preparedContent = current.inputVersion === job.inputVersion ? current.preparedContent : undefined;
+      const preparedContent = current.inputVersion === job.inputVersion && current.profile.split(':')[0] === CONTENT_PROFILE
+        ? current.preparedContent : undefined;
       return { ...job, preparedContent, createdAt: current.createdAt, stage: preparedContent ? 'translate' : 'fetch' };
     }
     return undefined;
@@ -108,24 +111,24 @@ export async function processJob(id: string, batch: number, deadline: number, bu
     if (!job) throw new Error(`Queued article payload missing: ${id}`);
     if (job.stage === 'complete' && job.profile === activeProfile()) return { summary: summarize(job), usage };
     if (job.profile !== activeProfile()) {
-      job = { ...job, profile: activeProfile(), result: undefined, stage: job.preparedContent ? 'translate' : 'fetch',
+      const preparedContent = job.profile.split(':')[0] === CONTENT_PROFILE ? job.preparedContent : undefined;
+      job = { ...job, preparedContent, profile: activeProfile(), result: undefined, stage: preparedContent ? 'translate' : 'fetch',
         completedChunks: 0, totalChunks: 0, failures: 0, error: undefined, retryAt: undefined };
     }
     job.lastAttemptAt = new Date().toISOString();
     if (!job.preparedContent) {
       stage = 'fetch';
       let content = job.item.content;
-      // Atom content and content:encoded are full posts regardless of length.
-      // Older Daring Fireball jobs predate that flag; their author permalink
-      // identifies a complete link-blog post, not the external linked article.
-      const fullPost = job.item.contentIsFull || (job.feed.id === 'daringfireball-net' &&
-        /https:\/\/daringfireball\.net\/linked\//.test(content));
-      if (!fullPost && needsFetch(content)) {
+      // RSS content may be a long summary or a link-blog commentary even
+      // when marked content:encoded. Fetch the article URL regardless of size.
+      if (job.item.link) {
         const fetched = await (dependencies.extract || fetchArticleContent)(job.item.link,
           AbortSignal.timeout(Math.max(1, Math.min(15_000, deadline - Date.now()))), content);
-        if (fetched.attempted && !fetched.content) throw new Error(fetched.error || 'Full article extraction failed');
-        if (fetched.content) content = fetched.content;
+        if (!fetched.content?.trim()) throw new Error(fetched.error || 'Full article extraction failed');
+        content = fetched.content;
         if (fetched.url) job.preparedUrl = fetched.url;
+      } else if (!job.item.contentIsFull || !content.trim()) {
+        throw new Error('Article URL missing and RSS does not contain a full post');
       }
       job.preparedContent = content;
       job.stage = 'translate';
