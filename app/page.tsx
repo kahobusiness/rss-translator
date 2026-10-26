@@ -1,6 +1,9 @@
 import { getEnabledFeeds } from '@/config/feeds';
 import { CopyButton } from './components/CopyButton';
 import styles from './page.module.css';
+import { RestoreFeedPosition } from './components/ReadingNavigation';
+import { Suspense } from 'react';
+import { FeedArticlePreview } from './components/FeedArticlePreview';
 import { MODEL_NAME } from '@/lib/model-config';
 
 export const dynamic = 'force-dynamic';
@@ -45,6 +48,7 @@ export default async function Home() {
 
   return (
     <main className={styles.main}>
+      <RestoreFeedPosition />
       <header className={styles.header}>
         <p className={styles.eyebrow}>RSS · 中文翻译</p>
         <h1 className={styles.title}>HN Popular Blogs 2025 博客精选 &amp; 翻译</h1>
@@ -88,25 +92,30 @@ export default async function Home() {
               </h3>
               <div className={styles.feedList}>
                 {categoryFeeds.map((feed) => (
-                  <div key={feed.id} className={styles.feedItem}>
-                    <div className={styles.feedMeta}>
-                      <span className={styles.feedName}>{feed.name}</span>
-                      {feed.htmlUrl && (
-                        <a
-                          href={feed.htmlUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={styles.feedLink}
-                        >
-                          {feed.htmlUrl.replace(/^https?:\/\//, '')}
-                        </a>
-                      )}
+                  <article key={feed.id} id={`feed-${feed.id}`} className={styles.feedCard}>
+                    <div className={styles.feedItem}>
+                      <div className={styles.feedMeta}>
+                        <span className={styles.feedName}>{feed.name}</span>
+                        {feed.htmlUrl && (
+                          <a
+                            href={feed.htmlUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={styles.feedLink}
+                          >
+                            {feed.htmlUrl.replace(/^https?:\/\//, '')}
+                          </a>
+                        )}
+                      </div>
+                      <div className={styles.feedSubscribe}>
+                        <code className={styles.feedPath}>/api/feed/{feed.id}</code>
+                        <CopyButton path={`/api/feed/${feed.id}`} label={`复制 ${feed.name} 的订阅地址`} />
+                      </div>
                     </div>
-                    <div className={styles.feedSubscribe}>
-                      <code className={styles.feedPath}>/api/feed/{feed.id}</code>
-                      <CopyButton path={`/api/feed/${feed.id}`} label={`复制 ${feed.name} 的订阅地址`} />
-                    </div>
-                  </div>
+                    <Suspense fallback={<p className={styles.articleEmpty}>正在加载最新译文…</p>}>
+                      <FeedArticlePreview feedId={feed.id} />
+                    </Suspense>
+                  </article>
                 ))}
               </div>
             </div>
