@@ -1,8 +1,9 @@
 import Link from 'next/link';
+import { ReturnToFeeds } from '../../components/ReadingNavigation';
 import { notFound } from 'next/navigation';
 import { getFeedConfig } from '@/config/feeds';
 import { loadFeed } from '@/lib/storage';
-import { articleDate, latestTranslation, readableArticleHtml } from '@/lib/article-preview';
+import { articleDate, latestTranslation, readableArticleHtml, adjacentTranslations } from '@/lib/article-preview';
 import styles from '../../page.module.css';
 
 export const dynamic = 'force-dynamic';
@@ -19,12 +20,14 @@ export default async function ReadArticle({ params, searchParams }: {
     ? feed?.items.find(item => item.guid === query.guid && item.translated !== false)
     : latestTranslation(feed?.items || []);
   if (!article) notFound();
+  const { previous, next } = adjacentTranslations(feed?.items || [], article.guid);
+  const articlePath = (guid: string) => `/read/${id}?guid=${encodeURIComponent(guid)}`;
   const date = articleDate(article.pubDate);
   let originalUrl: string | undefined;
   try { const url = new URL(article.link); if (['http:', 'https:'].includes(url.protocol)) originalUrl = url.href; } catch { /* No original link. */ }
   return (
     <main className={styles.readingMain}>
-      <Link href="/" className={styles.backLink}>← 返回全部订阅源</Link>
+      <ReturnToFeeds feedId={id} />
       <article>
         <header className={styles.readingHeader}>
           <div className={styles.articleMeta}>
@@ -38,10 +41,20 @@ export default async function ReadArticle({ params, searchParams }: {
         <div className={styles.readingBody}
           dangerouslySetInnerHTML={{ __html: readableArticleHtml(article.translatedContent, article.link) }} />
       </article>
-      <footer className={styles.readingFooter}>
-        <p>译文由 AI 自动生成，请结合原文阅读。</p>
-        <Link href="/" className={styles.readLink}>返回首页，订阅更多博客 →</Link>
-      </footer>
+      <nav className={styles.articleNavigation} aria-label="文章翻页">
+        {previous ? (
+          <Link className={styles.articleNavLink} href={articlePath(previous.guid)}>
+            <span className={styles.articleNavLabel}>← 上一篇</span>
+            <span>{previous.translatedTitle}</span>
+          </Link>
+        ) : <div className={styles.articleNavEmpty}>已是最新一篇</div>}
+        {next ? (
+          <Link className={`${styles.articleNavLink} ${styles.articleNavNext}`} href={articlePath(next.guid)}>
+            <span className={styles.articleNavLabel}>下一篇 →</span>
+            <span>{next.translatedTitle}</span>
+          </Link>
+        ) : <div className={`${styles.articleNavEmpty} ${styles.articleNavNext}`}>已是最早一篇</div>}
+      </nav>
     </main>
   );
 }

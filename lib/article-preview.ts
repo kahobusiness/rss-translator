@@ -2,9 +2,20 @@ import { Parser } from 'htmlparser2';
 import { escapeHtml } from './utils.ts';
 import type { TranslatedItem } from './storage.ts';
 
-export function latestTranslation(items: TranslatedItem[]): TranslatedItem | undefined {
+export function publishedTranslations(items: TranslatedItem[]): TranslatedItem[] {
   return items.filter(item => item.translated !== false && item.translatedTitle.trim() && item.translatedContent.trim())
-    .sort((a, b) => (Date.parse(b.pubDate) || 0) - (Date.parse(a.pubDate) || 0))[0];
+    .sort((a, b) => (Date.parse(b.pubDate) || 0) - (Date.parse(a.pubDate) || 0));
+}
+
+export function latestTranslation(items: TranslatedItem[]): TranslatedItem | undefined {
+  return publishedTranslations(items)[0];
+}
+
+export function adjacentTranslations(items: TranslatedItem[], guid: string) {
+  const articles = publishedTranslations(items);
+  const index = articles.findIndex(item => item.guid === guid);
+  return { previous: index > 0 ? articles[index - 1] : undefined,
+    next: index >= 0 ? articles[index + 1] : undefined };
 }
 
 export function articleExcerpt(html: string, limit = 220): string {

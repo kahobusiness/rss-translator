@@ -27,3 +27,16 @@ test('reading HTML preserves article structure while removing active content and
   assert.ok(result.includes('<pre>&lt;code&gt;</pre>'));
   assert.doesNotMatch(result, /onclick|onerror|javascript:|iframe|script|svg|hidden|bad\(\)/);
 });
+
+test('article navigation sorts by publication date, skips failed or empty translations and handles boundaries', async () => {
+  const { adjacentTranslations } = await import('../lib/article-preview.ts');
+  const item = (guid: string, day: number, translated = true) => ({ guid, pubDate: `2026-01-0${day}`, translated,
+    translatedTitle: guid, translatedContent: '<p>正文</p>' }) as TranslatedItem;
+  const oldest = item('oldest', 1), middle = item('middle', 2), newest = item('newest', 3);
+  const items = [oldest, newest, item('failed', 4, false), middle, { ...item('empty', 5), translatedContent: '' }];
+  assert.deepEqual(adjacentTranslations(items, 'middle'), { previous: newest, next: oldest });
+  assert.deepEqual(adjacentTranslations(items, 'newest'), { previous: undefined, next: middle });
+  assert.deepEqual(adjacentTranslations(items, 'oldest'), { previous: middle, next: undefined });
+  assert.deepEqual(adjacentTranslations(items, 'missing'), { previous: undefined, next: undefined });
+  assert.deepEqual(adjacentTranslations([middle], 'middle'), { previous: undefined, next: undefined });
+});

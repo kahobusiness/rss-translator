@@ -51,7 +51,7 @@ OPML → curated 20-feed allowlist → RSS discovery → persistent article jobs
 
 ## Homepage and reading
 
-Each feed card loads its latest successful translation from its own archive (not the capped aggregate index), with a title, publication date and plain-text excerpt. A failed preview read must not break subscription controls or other feeds. `/read/[id]?guid=...` reads the selected archived translation; missing articles return 404. `lib/article-preview.ts` handles selection, excerpts, dates and a restricted HTML allowlist; never render raw publisher HTML directly on the site.
+Each feed card loads its latest successful translation from its own archive (not the capped aggregate index), with a title, publication date and plain-text excerpt. A failed preview read must not break subscription controls or other feeds. `/read/[id]?guid=...` reads the selected archived translation; missing articles return 404. Reading links preserve the homepage card-relative scroll offset in session storage; returning restores it as streamed cards settle, with an anchor fallback for direct visits. Reader pagination stays within the same feed (previous = newer, next = older), skipping failed/empty translations. `lib/article-preview.ts` handles selection, excerpts, dates and a restricted HTML allowlist; never render raw publisher HTML directly on the site.
 
 ## Routes
 

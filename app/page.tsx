@@ -1,6 +1,7 @@
 import { getEnabledFeeds } from '@/config/feeds';
 import { CopyButton } from './components/CopyButton';
 import styles from './page.module.css';
+import { RestoreFeedPosition } from './components/ReadingNavigation';
 import { Suspense } from 'react';
 import { FeedArticlePreview } from './components/FeedArticlePreview';
 import { MODEL_NAME } from '@/lib/model-config';
@@ -47,6 +48,7 @@ export default async function Home() {
 
   return (
     <main className={styles.main}>
+      <RestoreFeedPosition />
       <header className={styles.header}>
         <p className={styles.eyebrow}>RSS · 中文翻译</p>
         <h1 className={styles.title}>HN Popular Blogs 2025 博客精选 &amp; 翻译</h1>
@@ -90,7 +92,7 @@ export default async function Home() {
               </h3>
               <div className={styles.feedList}>
                 {categoryFeeds.map((feed) => (
-                  <article key={feed.id} className={styles.feedCard}>
+                  <article key={feed.id} id={`feed-${feed.id}`} className={styles.feedCard}>
                     <div className={styles.feedItem}>
                       <div className={styles.feedMeta}>
                         <span className={styles.feedName}>{feed.name}</span>

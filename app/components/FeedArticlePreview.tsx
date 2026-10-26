@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { ArticleLink } from './ReadingNavigation';
 import { loadFeed } from '@/lib/storage';
 import { latestTranslation, articleExcerpt, articleDate } from '@/lib/article-preview';
 import styles from '../page.module.css';
@@ -20,9 +20,9 @@ export async function FeedArticlePreview({ feedId }: { feedId: string }) {
         <span>最新译文</span>
         {date && <time dateTime={article.pubDate}>{date}</time>}
       </div>
-      <h4 className={styles.articleTitle}><Link href={path}>{article.translatedTitle}</Link></h4>
+      <h4 className={styles.articleTitle}><ArticleLink feedId={feedId} href={path}>{article.translatedTitle}</ArticleLink></h4>
       <p className={styles.articleExcerpt}>{articleExcerpt(article.translatedContent)}</p>
-      <Link className={styles.readLink} href={path}>阅读全文 <span aria-hidden="true">→</span></Link>
+      <ArticleLink feedId={feedId} className={styles.readLink} href={path}>阅读全文 <span aria-hidden="true">→</span></ArticleLink>
     </div>
   );
 }
