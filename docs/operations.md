@@ -76,6 +76,12 @@ GitHub 默认分支和 Vercel 生产分支均为 `main`；推送到 `main` 会�
 | `GET /api/cron?batch=N&dryRun=1` | 严格只读诊断，不调用模型或写入任务 |
 | `GET /api/status` | 受保护的运行状态；支持 `state=failed`、`feed=源ID` 和 `limit=20` |
 
+### Speed Insights
+
+根布局通过 `@vercel/speed-insights/next` 接入 Speed Insights，采集首页与 `/read/[id]` 阅读页的真实用户性能指标。上报前移除查询参数和片段，不发送文章 GUID；API 路径不采集。SDK 自动识别 Next.js 动态路由。
+
+在 Vercel 项目的 Speed Insights 页面启用后，部署包含 SDK 的版本，再访问首页和阅读页即可开始积累数据。开发环境仅输出调试信息；本地构建不能证明线上已收到数据。查看结果时区分 Production、Preview 与设备类型。本次使用项目现有配置，不升级套餐或开启 Plus。
+
 ### Vercel 原生监控
 
 监控复用 Vercel Web Analytics、Observability 和 Runtime Logs，不再维护独立的 Blob 计数、IP 指纹、报表密钥或统计 API。RSS 保留原有 5 分钟浏览器/CDN 缓存。项目不提供公开的监控页面或后台入口，统计数据请登录 Vercel 项目后台查看，访问权限由 Vercel 团队控制。
