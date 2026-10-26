@@ -38,7 +38,7 @@ OPML → curated 20-feed allowlist → RSS discovery → persistent article jobs
 - `lib/json-store.ts` — Private Blob state with uncached origin reads and strong ETag conditional writes; local `data/` uses locks and atomic replacement. Old public Blob is read-only compatibility input. Read errors must not be treated as missing data.
 - `lib/storage.ts` — Last 100 GUIDs per feed, per-batch recent-index shards and legacy index merge. Failed retries cannot overwrite successful translations. Full results also remain in private job payloads after leaving the rolling RSS window.
 - `lib/rss-response.ts`, `lib/utils.ts` — Stream RSS as UTF-8, escape metadata and generate plain descriptions; include complete translated HTML and original content.
-- `lib/web-analytics.ts`, `lib/rss-observability.ts`, `lib/monitored-rss.ts` — Vercel Analytics and structured origin logs. Copy events represent intent, not subscriber counts; origin logs exclude CDN hits. Custom metrics are opt-in.
+- `lib/web-analytics.ts`, `lib/rss-observability.ts`, `lib/monitored-rss.ts` — Vercel Analytics and structured origin logs. Copy events represent intent, not subscriber counts; origin logs exclude CDN hits. Custom metrics are opt-in. `app/components/PerformanceInsights.tsx` mounts the official Next.js Speed Insights SDK in the root layout; `lib/speed-insights.ts` restricts performance events to homepage/reading routes and strips query strings and fragments.
 
 ## Invariants
 

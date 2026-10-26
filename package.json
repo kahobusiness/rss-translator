@@ -17,6 +17,7 @@
     "@vercel/analytics": "2.0.1",
     "@vercel/blob": "2.8.2",
     "@vercel/functions": "3.10.3",
+    "@vercel/speed-insights": "2.0.0",
     "entities": "8.1.0",
     "feed": "^4.2.2",
     "htmlparser2": "12.0.0",
