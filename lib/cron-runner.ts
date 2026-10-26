@@ -39,7 +39,7 @@ export async function runCronBatch(batch: number, workOnly = false) {
             guid: i.guid, title: i.originalTitle, content: i.originalContent, link: i.link, pubDate: i.pubDate,
             author: i.author, categories: i.categories,
           }));
-          const candidates = [...new Map([...parsed.items, ...historical].map(i => [i.guid, i])).values()]
+          const candidates = [...new Map([...historical, ...parsed.items].map(i => [i.guid, i])).values()]
             .filter(i => { const old = previous.get(i.guid); return needsTranslation(old) ||
               !!(old?.sourceVersion && old.sourceVersion !== sourceVersion(i)); });
           // Bound discovery writes, not article completeness. Subsequent runs

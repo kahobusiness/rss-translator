@@ -1,8 +1,6 @@
 import { extract } from '@extractus/article-extractor';
 import { Parser } from 'htmlparser2';
 
-export const needsFetch = (content: string) => content.trim().length < 1000;
-
 export async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

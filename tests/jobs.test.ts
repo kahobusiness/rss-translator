@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { enqueueJob, jobKey, newJob, processJob } from '../lib/jobs.ts';
+import { enqueueJob, jobKey, newJob, processJob, needsTranslation } from '../lib/jobs.ts';
 import type { ArticleJob } from '../lib/jobs.ts';
 import { memoryStore } from './memory-store.ts';
 import type { ChunkProvider } from '../lib/translator.ts';
@@ -15,7 +15,7 @@ test('queued long article survives repeated runs; publishes only after all chunk
   const store = memoryStore();
   const queued = await enqueueJob(newJob(feed, item, { feedTitle: 'Example' }), store);
   let published = 0;
-  const dependencies = { store, provider, publish: async (_job: ArticleJob, result: { translationComplete?: boolean; originalContent: string }) => {
+  const dependencies = { store, provider, extract: async () => ({ attempted: true, content: item.content }), publish: async (_job: ArticleJob, result: { translationComplete?: boolean; originalContent: string }) => {
     published++; assert.equal(result.translationComplete, true); assert.equal(result.originalContent, item.content);
   } };
   let run = await processJob(queued.id, 0, Date.now() + 30_000, { remaining: 1 }, dependencies);
@@ -39,7 +39,7 @@ test('failed publishing retries without translating again; records stage and ret
   const queued = await enqueueJob(newJob(feed, { ...item, content: '<p>' + 'Hello '.repeat(200) + '</p>' }, { feedTitle: 'Example' }), store);
   let calls = 0;
   let publishes = 0;
-  const dependencies = { store, provider: (async (...args) => { calls++; return provider(...args); }) as ChunkProvider,
+  const dependencies = { store, extract: async () => ({ attempted: true, content: '<p>Full article.</p>' }), provider: (async (...args) => { calls++; return provider(...args); }) as ChunkProvider,
     publish: async () => { publishes++; if (publishes === 1) throw new Error('Index write unavailable'); } };
   const first = await processJob(queued.id, 0, Date.now() + 30_000, { remaining: 8 }, dependencies);
   assert.equal(first.summary?.stage, 'failed');
@@ -62,18 +62,19 @@ test('extraction failure remains retryable and never publishes a snippet', async
   assert.equal((await store.read<ArticleJob>(jobKey(queued.id)))!.value.result, undefined);
 });
 
-test('short full posts and legacy link-blog posts never fetch the external destination', async () => {
-  for (const [source, contentIsFull] of [[feed, true], [{ ...feed, id: 'daringfireball-net' }, undefined]] as const) {
-    const store = memoryStore();
-    const content = '<p>A complete short post.</p><a href="https://daringfireball.net/linked/2026/10/post">★</a>';
-    const queued = await enqueueJob(newJob(source, { ...item, content, contentIsFull }, { feedTitle: 'Example' }), store);
-    let published = 0;
-    const result = await processJob(queued.id, 0, Date.now() + 30_000, { remaining: 8 }, { store, provider,
-      extract: async () => { throw new Error('must not fetch the linked site'); },
-      publish: async (_job, result) => { published++; assert.equal(result.originalContent, content); } });
-    assert.equal(result.summary?.stage, 'complete');
-    assert.equal(published, 1);
-  }
+test('long encoded link-blog commentary is replaced with the linked article body', async () => {
+  const store = memoryStore();
+  const content = '<p>Author commentary. </p>'.repeat(100);
+  const body = '<p>Original linked article body.</p>';
+  const queued = await enqueueJob(newJob({ ...feed, id: 'daringfireball-net' },
+    { ...item, content, contentIsFull: true }, { feedTitle: 'Example' }), store);
+  let published = 0;
+  const result = await processJob(queued.id, 0, Date.now() + 30_000, { remaining: 8 }, { store, provider,
+    extract: async url => { assert.equal(url, item.link); return { attempted: true, content: body, url }; },
+    publish: async (_job, result) => { published++; assert.equal(result.originalContent, body);
+      assert.ok(result.translatedContent.includes('Original linked article body.')); } });
+  assert.equal(result.summary?.stage, 'complete');
+  assert.equal(published, 1);
 });
 
 test('cron and operational status fail closed without credentials', async () => {
@@ -94,4 +95,16 @@ test('recover payloads orphaned by a crash before the batch manifest was saved',
     async () => [{ key: jobKey(queued.id, 2), uploadedAt: Date.now() }]);
   assert.equal(recovered[queued.id].stage, 'fetch');
   assert.equal(recovered[queued.id].feedId, feed.id);
+});
+
+test('legacy completed snippets are re-fetched rather than reusing prepared commentary', async () => {
+  const store = memoryStore();
+  const old = { ...newJob(feed, item, { feedTitle: 'Example' }), profile: 'legacy-profile',
+    preparedContent: 'old commentary', stage: 'complete' as const };
+  await store.compareAndSwap(jobKey(old.id), old, null);
+  await enqueueJob(newJob(feed, item, { feedTitle: 'Example' }), store);
+  const upgraded = (await store.read<ArticleJob>(jobKey(old.id)))!.value;
+  assert.equal(upgraded.stage, 'fetch');
+  assert.equal(upgraded.preparedContent, undefined);
+  assert.equal(needsTranslation({ translated: true, originalContent: 'short summary' } as never), true);
 });

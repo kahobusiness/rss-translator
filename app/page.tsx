@@ -47,9 +47,9 @@ export default async function Home() {
     <main className={styles.main}>
       <header className={styles.header}>
         <p className={styles.eyebrow}>RSS · 中文翻译</p>
-        <h1 className={styles.title}>精选英文技术博客，译成中文。</h1>
+        <h1 className={styles.title}>HN Popular Blogs 2025 博客精选 &amp; 翻译</h1>
         <p className={styles.subtitle}>
-          {feeds.length} 个信源，每 6 小时自动更新，由 {MODEL_NAME} 翻译。
+          精选 {feeds.length} 个博客，由 {MODEL_NAME} 自动翻译，每 6 小时更新。
         </p>
       </header>
 
