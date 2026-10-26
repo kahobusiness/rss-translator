@@ -5,6 +5,7 @@ import { getFeedConfig } from '@/config/feeds';
 import { escapeHtml, stripHtmlTags } from '@/lib/utils';
 import { getSiteUrl } from '@/lib/site-url';
 import { rssResponse } from '@/lib/rss-response';
+import { monitoredRss } from '@/lib/monitored-rss';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +14,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  return monitoredRss(request, id, () => generateFeed(request, id));
+}
+
+async function generateFeed(request: NextRequest, id: string) {
 
   // 检查feed配置是否存在
   const feedConfig = await getFeedConfig(id);
@@ -77,5 +82,5 @@ export async function GET(
   // 返回RSS XML
   const rssXml = feed.rss2();
 
-  return rssResponse(rssXml);
+  return rssResponse(rssXml, storedFeed.items.filter(i => i.translated !== false).length);
 }

@@ -3,10 +3,15 @@ import { getAllTranslatedItems } from '@/lib/storage';
 import { escapeHtml, stripHtmlTags } from '@/lib/utils';
 import { getSiteUrl } from '@/lib/site-url';
 import { rssResponse } from '@/lib/rss-response';
+import { monitoredRss } from '@/lib/monitored-rss';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
+  return monitoredRss(request, 'all', () => generateFeed(request));
+}
+
+async function generateFeed(request: Request) {
   const items = await getAllTranslatedItems(100);
 
   const baseUrl = getSiteUrl(request);
@@ -62,5 +67,5 @@ export async function GET(request: Request) {
 
   const rss = feed.rss2();
 
-  return rssResponse(rss);
+  return rssResponse(rss, items.filter(i => i.translated !== false).length);
 }

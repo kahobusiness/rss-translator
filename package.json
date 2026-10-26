@@ -14,7 +14,9 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
     "@extractus/article-extractor": "^8.0.20",
+    "@vercel/analytics": "2.0.1",
     "@vercel/blob": "2.8.2",
+    "@vercel/functions": "3.10.3",
     "entities": "8.1.0",
     "feed": "^4.2.2",
     "htmlparser2": "12.0.0",
@@ -37,5 +39,10 @@
   "engines": {
     "node": "24.x"
   },
-  "type": "module"
+  "type": "module",
+  "overrides": {
+    "@vercel/cli-config": {
+      "zod": "4.6.6"
+    }
+  }
 }

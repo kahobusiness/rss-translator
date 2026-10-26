@@ -76,6 +76,54 @@ GitHub 默认分支和 Vercel 生产分支均为 `main`；推送到 `main` 会�
 | `GET /api/cron?batch=N&dryRun=1` | 严格只读诊断，不调用模型或写入任务 |
 | `GET /api/status` | 受保护的运行状态；支持 `state=failed`、`feed=源ID` 和 `limit=20` |
 
+### Vercel 原生监控
+
+监控复用 Vercel Web Analytics、Observability 和 Runtime Logs，不再维护独立的 Blob 计数、IP 指纹、报表密钥或统计 API。RSS 保留原有 5 分钟浏览器/CDN 缓存。项目不提供公开的监控页面或后台入口，统计数据请登录 Vercel 项目后台查看，访问权限由 Vercel 团队控制。
+
+| 问题 | 数据来源与口径 |
+| --- | --- |
+| 每天多少人访问网站？ | Web Analytics 的 Visitors / Page Views，仅网页访问 |
+| 哪些订阅源被复制？ | Web Analytics 的 `rss_subscription_copy` 自定义事件，按 `feed_id`、`feed_type` 区分；只在剪贴板写入成功后发送 |
+| 每天 RSS 被拉取多少次？ | Observability → CDN Requests，查看 `/api/feed/all` 和 `/api/feed/[id]` 路由及 HTTP 状态，包含 CDN 缓存命中 |
+| 哪些阅读器访问了源站？ | Logs 搜索 `rss_origin_response`，查看规范化的 `reader` 和 `feed`，只含缓存未命中的 GET |
+| 后台翻译是否健康？ | Cron Jobs、Functions、Logs 及已有的 `/api/status` |
+
+Web Analytics 仅追踪公开主页，发送前移除 URL 查询参数与片段，并排除 API 和其他页面。复制事件仅发送源 ID 及聚合/单源类型，不发送复制的完整 URL、IP、完整 User-Agent 或密钥。Analytics 故障不会影响复制操作；没有读取或存储剪贴板中既有的内容。用户禁用脚本或拦截采集会影响网页统计。
+
+**复制成功仅代表订阅意向，不能当作新增订阅人数。** RSS 请求也包含自动刷新、浏览器及机器人；云阅读器可能替多人合并抓取。平台原生请求量和网页访客都无法准确还原 RSS 订阅人数或实际阅读人数。源站返回含文章的成功响应不证明客户端下载完成或有人阅读。
+
+Vercel 部署的 RSS GET 会输出结构化 `rss_origin_response` 日志，包含源 ID（已知列表外统一为 `other`，避免维度膨胀）、阅读器类别、HTTP 状态、文章出现条数和响应生成耗时。HEAD 不记录。日志及可选自定义指标不包含 CDN 命中；完整拉取流量以 CDN Requests 为准。重复获取相同文章仍算多次请求，文章条数也不是去重文章数。
+
+#### 可选：Observability Custom Metrics
+
+默认不开启付费扩展。仅在团队已具备 **Observability Plus / Custom Metrics** 权益时设置 `RSS_CUSTOM_METRICS_ENABLED=true` 并重新部署：
+
+| 指标 | 聚合方式 | 含义 |
+| --- | --- | --- |
+| `rss.origin_requests` | `sum` | 源站处理的 RSS GET 次数，含失败 |
+| `rss.origin_duration_ms` | `avg` / `p95` | 源站响应生成耗时，不是客户端完整下载耗时 |
+| `rss.origin_content_responses` | `sum` | 源站成功生成非空 RSS 的次数 |
+| `rss.origin_item_appearances` | `sum` | 源站成功非空响应中累计出现的文章条数（含重复） |
+
+指标标签为 `feed`、`reader`、`status_class`，不包含用户标识、请求 ID 或任意 URL。SDK 的 `metric()` 在不支持的运行环境中不采集；需部署到 Vercel 并命中源站后才可验证入库。本地通过只能证明埋点调用正确。每次源站请求最多额外上报 4 个指标点，每个点计入 Observability 事件；未开启自定义指标时仍可查看 CDN Requests 和日志。
+
+```bash
+# 部署后先调用 RSS 接口产生源站请求，再查看可用指标及标签
+vercel metrics schema rss.origin_requests
+vercel metrics rss.origin_requests -a sum --group-by feed --since 24h
+vercel metrics rss.origin_duration_ms -a p95 --since 24h
+```
+
+#### 上线与查看
+
+1. 在项目 Web Analytics 页面确认已启用采集，然后部署包含 `@vercel/analytics` 的代码。当前项目为 Pro，网页自定义事件能力由套餐提供；不自动升级订阅。
+2. 打开公开首页，复制一次订阅地址；在 Analytics → Events 查看 `rss_subscription_copy`，对比 `aggregate` 和 `single`，以及各源 ID。
+3. 在 Observability → CDN Requests 选择 Production 和相同时间范围，查看 RSS 路由，区分 2xx、3xx、4xx、5xx；不要把 `/api/cron` 算作用户拉取。Vercel Functions 次数不等于全部 RSS 请求次数。
+4. 在 Logs 搜索 `rss_origin_response` 检查源站情况；已有 Cron 运行日志继续用于后台故障排查。
+5. 按界面展示的时区与时间范围解读每日数据；可用历史范围、细分查询、告警和保留期限依赖套餐。未开启 Plus 时，不承诺跨月自定义查询。旧的网页访问和复制行为无法补录。
+
+参考：[Web Analytics 接入](https://vercel.com/docs/analytics/quickstart)、[自定义事件](https://vercel.com/docs/analytics/custom-events)、[Observability](https://vercel.com/docs/observability)、[Functions metric API](https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package#metric)。
+
 状态接口返回各批次上次运行、近期 48 次运行记录、源抓取错误、任务积压、失败阶段、分块进度、重试时间以及实际 API/token 统计。未初始化、超过 8 小时没有成功发现文章、配置降级、源抓取失败或任务失败时返回 503，健康时返回 200。Vercel 结构化运行日志也记录源错误和批次结果，可供现有告警系统采集。
 
 失败任务持续按指数退避重试，最长间隔 24 小时。已经完成的分块保留；单轮执行期限导致的暂停不算作翻译失败。调度使用 UTC，见 `vercel.json`。
@@ -122,7 +170,7 @@ node --env-file=.env.production.local scripts/rebuild-recent-index.ts --write --
 
 回滚前应先停用新增工作 Cron，确认没有新 worker 在运行，再回退应用。旧版仅认识公开存档，回退后不会看到私有存储中新完成的译文；私有数据仍保留，恢复新版后可继续使用。不要清空私有存储作为回滚手段。
 
-生产依赖的 `npm audit --omit=dev` 检查已通过。开发工具链仍存在由 `eslint-config-next → fast-glob → micromatch → braces` 引入的上游安全通告；当前没有兼容修复版本，未采用会降级框架工具的 `audit fix --force`。
+本次安装后的依赖审计为 0 漏洞。`package.json` 对 `@vercel/cli-config` 的间接 `zod` 依赖设置了 `4.6.6` 覆盖，修复其固定旧版本引入的内存耗尽通告；没有使用会降级 Vercel SDK 的 `audit fix --force`。
 
 ## License
 

@@ -102,7 +102,10 @@ export default async function Home() {
                         </a>
                       )}
                     </div>
-                    <code className={styles.feedPath}>/api/feed/{feed.id}</code>
+                    <div className={styles.feedSubscribe}>
+                      <code className={styles.feedPath}>/api/feed/{feed.id}</code>
+                      <CopyButton path={`/api/feed/${feed.id}`} label={`复制 ${feed.name} 的订阅地址`} />
+                    </div>
                   </div>
                 ))}
               </div>
