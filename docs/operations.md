@@ -144,7 +144,7 @@ npm run lint
 npm run check
 ```
 
-项目锁文件与 `.npmrc` 固定安装行为，Vercel 使用 `npm ci`，构建前执行测试和 ESLint。测试启动时会清除继承的生产凭据，避免云端构建测试误写生产数据。
+项目锁文件与 `.npmrc` 固定安装行为，Vercel 使用 `npm ci` 安装并执行 `npm run check`；两条命令均先移除不受 npm 支持的 `npm_config_cache_dir` / `NPM_CONFIG_CACHE_DIR` 环境变量，避免重复配置警告。`package.json` 的 `allowScripts` 仅许可已检查的 `unrs-resolver@1.11.1` 安装脚本；升级该依赖时需重新核对。测试启动时会清除继承的生产凭据，避免云端构建测试误写生产数据。
 
 真实集成验证需先获准临时读取生产环境变量，完成后删除临时文件：
 

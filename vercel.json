@@ -33,6 +33,6 @@
       "schedule": "8,23,38,53 * * * *"
     }
   ],
-  "installCommand": "npm ci",
-  "buildCommand": "npm test && npm run lint && npm run build"
+  "installCommand": "env -u npm_config_cache_dir -u NPM_CONFIG_CACHE_DIR npm ci",
+  "buildCommand": "env -u npm_config_cache_dir -u NPM_CONFIG_CACHE_DIR npm run check"
 }
