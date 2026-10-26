@@ -49,10 +49,15 @@ OPML → curated 20-feed allowlist → RSS discovery → persistent article jobs
 - Historical backfill is incremental and bounded. Deployment does not immediately retranslate the archive.
 - Use stable `SITE_URL` / production domain for subscription URLs, never deployment-specific `VERCEL_URL`.
 
+## Homepage and reading
+
+Each feed card loads its latest successful translation from its own archive (not the capped aggregate index), with a title, publication date and plain-text excerpt. A failed preview read must not break subscription controls or other feeds. `/read/[id]?guid=...` reads the selected archived translation; missing articles return 404. `lib/article-preview.ts` handles selection, excerpts, dates and a restricted HTML allowlist; never render raw publisher HTML directly on the site.
+
 ## Routes
 
 | GET endpoint | Behavior |
 | --- | --- |
+| `/read/[id]?guid=...` | Public translated article reading page |
 | `/api/feeds` | Enabled feed configuration |
 | `/api/feed/all` | Aggregated Chinese RSS, latest 100 articles |
 | `/api/feed/[id]` | Individual Chinese RSS |
